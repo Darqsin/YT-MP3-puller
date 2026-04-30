@@ -109,9 +109,7 @@ class TuneVaultCore:
         if not music_dir:
             music_dir = os.path.join(os.path.expanduser("~"), "Music", "TuneVault")
 
-        artist_dir = safe_filename(info.artist or "Unknown Artist")
-        album_dir = safe_filename(info.album or "Singles")
-        dest_dir = os.path.join(music_dir, artist_dir, album_dir)
+        dest_dir = music_dir
         os.makedirs(dest_dir, exist_ok=True)
 
         title = safe_filename(info.title or "Unknown Track")
