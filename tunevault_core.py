@@ -35,7 +35,109 @@ class VideoInfo:
 def safe_filename(value):
     value = value or "Unknown"
     value = re.sub(r'[\\/*?:"<>|]', "_", value).strip(". ")
+    value = re.sub(r"\s+", " ", value).strip()
     return value or "Unknown"
+
+
+JUNK_BRACKET_RE = re.compile(
+    r"\s*[\(\[]\s*[^\)\]]*"
+    r"(?:official|music\s*video|lyric|lyrics|video|audio|hd|4k|upgrade|visualizer|remaster|remastered|explicit|clean|hq)"
+    r"[^\)\]]*[\)\]]\s*",
+    re.IGNORECASE,
+)
+
+JUNK_TEXT_RE = re.compile(
+    r"\s*[-|:]?\s*"
+    r"(?:official\s*)?(?:music\s*)?(?:lyric|lyrics|video|audio|visualizer)"
+    r"(?:\s*video)?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _norm_name(value):
+    return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
+
+
+def clean_youtube_title(raw_title, fallback_artist=""):
+    """
+    Clean YouTube-style titles and return (artist, track_title).
+
+    Handles both:
+        Artist - Song
+        Song - Artist
+
+    Example:
+        Numb (Official Music Video) [4K UPGRADE] – Linkin Park
+        -> (Linkin Park, Numb)
+    """
+    title = raw_title or "Unknown Track"
+    title = title.replace("–", "-").replace("—", "-").replace("−", "-")
+    title = JUNK_BRACKET_RE.sub(" ", title)
+    title = re.sub(r"\s+", " ", title).strip(" -|:.")
+    title = JUNK_TEXT_RE.sub("", title).strip(" -|:.")
+
+    fallback_artist = (fallback_artist or "").strip()
+    if _norm_name(fallback_artist) in {"", "unknown", "unknownartist", "variousartists"}:
+        fallback_artist = ""
+
+    parts = [p.strip(" -|:.") for p in re.split(r"\s+-\s+", title) if p.strip(" -|:.")]
+
+    artist = fallback_artist
+    track = title
+
+    if len(parts) >= 2:
+        left = parts[0]
+        right = parts[-1]
+        left_norm = _norm_name(left)
+        right_norm = _norm_name(right)
+        fallback_norm = _norm_name(fallback_artist)
+
+        if fallback_norm and right_norm == fallback_norm:
+            artist = right
+            track = " - ".join(parts[:-1]).strip()
+        elif fallback_norm and left_norm == fallback_norm:
+            artist = left
+            track = " - ".join(parts[1:]).strip()
+        elif fallback_norm and right_norm in fallback_norm:
+            artist = fallback_artist
+            track = " - ".join(parts[:-1]).strip()
+        elif fallback_norm and left_norm in fallback_norm:
+            artist = fallback_artist
+            track = " - ".join(parts[1:]).strip()
+        else:
+            # Common YouTube pattern when official artist channel uploads as "Song - Artist".
+            # Keep the likely artist first in the saved filename.
+            if len(right.split()) <= max(3, len(left.split())):
+                artist = right
+                track = " - ".join(parts[:-1]).strip()
+            else:
+                artist = left
+                track = " - ".join(parts[1:]).strip()
+
+    track = JUNK_BRACKET_RE.sub(" ", track)
+    track = JUNK_TEXT_RE.sub("", track)
+    track = re.sub(r"\s+", " ", track).strip(" -|:.") or "Unknown Track"
+    artist = re.sub(r"\s+", " ", artist).strip(" -|:.")
+
+    return artist, track
+
+
+def make_track_filename(artist, title):
+    artist = safe_filename(artist) if artist else ""
+    title = safe_filename(title or "Unknown Track")
+    if artist and _norm_name(artist) not in {"unknown", "unknownartist"}:
+        return f"{artist} - {title}"
+    return title
+
+
+def unique_output_base(dest_dir, base_name):
+    """Return a filename base that will not overwrite an existing MP3."""
+    candidate = base_name
+    counter = 2
+    while os.path.exists(os.path.join(dest_dir, f"{candidate}.mp3")):
+        candidate = f"{base_name} ({counter})"
+        counter += 1
+    return candidate
 
 
 class TuneVaultCore:
@@ -86,11 +188,15 @@ class TuneVaultCore:
             if item.get("id") and not str(video_url).startswith("http"):
                 video_url = f"https://www.youtube.com/watch?v={item.get('id')}"
 
+            raw_title = item.get("title", "Unknown")
+            raw_artist = item.get("artist") or item.get("creator") or item.get("uploader") or ""
+            clean_artist, clean_title = clean_youtube_title(raw_title, raw_artist)
+
             videos.append(VideoInfo(
                 video_id=item.get("id", ""),
-                title=item.get("title", "Unknown"),
+                title=clean_title,
                 url=video_url,
-                artist=item.get("artist") or item.get("uploader") or "Unknown Artist",
+                artist=clean_artist or raw_artist or "Unknown Artist",
                 album=item.get("album") or "Singles",
                 genre=item.get("genre") or "",
                 year=year_val,
@@ -112,9 +218,14 @@ class TuneVaultCore:
         dest_dir = music_dir
         os.makedirs(dest_dir, exist_ok=True)
 
-        title = safe_filename(info.title or "Unknown Track")
-        output_template = os.path.join(dest_dir, f"{title}.%(ext)s")
-        final_path = os.path.join(dest_dir, f"{title}.mp3")
+        clean_artist, clean_title = clean_youtube_title(info.title or "Unknown Track", info.artist)
+        info.artist = clean_artist or info.artist or "Unknown Artist"
+        info.title = clean_title or info.title or "Unknown Track"
+
+        base_name = make_track_filename(info.artist, info.title)
+        base_name = unique_output_base(dest_dir, base_name)
+        output_template = os.path.join(dest_dir, f"{base_name}.%(ext)s")
+        final_path = os.path.join(dest_dir, f"{base_name}.mp3")
 
         def hook(d):
             if not progress_callback:
@@ -124,9 +235,9 @@ class TuneVaultCore:
                 total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
                 downloaded = d.get("downloaded_bytes") or 0
                 pct = int((downloaded / total) * 70) if total else 20
-                progress_callback("downloading", min(max(pct, 10), 75), f"Downloading: {info.title}")
+                progress_callback("downloading", min(max(pct, 10), 75), f"Downloading: {info.artist} - {info.title}")
             elif status == "finished":
-                progress_callback("converting", 80, f"Converting to MP3: {info.title}")
+                progress_callback("converting", 80, f"Converting to MP3: {info.artist} - {info.title}")
 
         ydl_opts = {
             "format": "bestaudio/best",
@@ -146,7 +257,7 @@ class TuneVaultCore:
         }
 
         if progress_callback:
-            progress_callback("starting", 5, f"Starting: {info.title}")
+            progress_callback("starting", 5, f"Starting: {info.artist} - {info.title}")
 
         with YoutubeDL(ydl_opts) as ydl:
             ydl.download([info.url])
@@ -167,6 +278,6 @@ class TuneVaultCore:
         )
 
         if progress_callback:
-            progress_callback("complete", 100, f"Complete: {info.title}")
+            progress_callback("complete", 100, f"Complete: {info.artist} - {info.title}")
 
         return final_path
