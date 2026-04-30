@@ -1,13 +1,13 @@
 """
-TuneVault - CustomTkinter Blue/Yellow Futuristic GUI
+TuneVault - Blue/Yellow Mockup-Style CustomTkinter GUI
 Drop-in replacement for tunevault.py.
 
-Requires:
-    pip install customtkinter
-
-Uses existing:
+Keeps your existing backend files:
     tunevault_core.py
     tunevault_db.py
+
+Requires:
+    customtkinter
 """
 
 import os
@@ -20,66 +20,98 @@ from tkinter import filedialog, messagebox
 try:
     import customtkinter as ctk
 except ImportError:
-    raise SystemExit(
-        "CustomTkinter is not installed. Run: python -m pip install customtkinter"
-    )
+    raise SystemExit("CustomTkinter is not installed. Run: python -m pip install customtkinter")
 
 from tunevault_core import TuneVaultCore
 from tunevault_db import TuneVaultDB
 
 
-# -----------------------------
-# Futuristic Blue / Yellow Theme
-# -----------------------------
+# -----------------------------------------------------------------------------
+# Blue / Yellow Futuristic Theme
+# -----------------------------------------------------------------------------
 COLORS = {
-    "bg": "#020B1A",
-    "bg_2": "#06152B",
-    "panel": "#071D3A",
-    "panel_2": "#0A274D",
+    "bg": "#020A16",
+    "bg_dark": "#010713",
+    "panel": "#06152B",
+    "panel_2": "#082044",
     "panel_3": "#031126",
+    "row": "#071B36",
+    "row_alt": "#05162D",
     "blue": "#168BFF",
-    "blue_2": "#0057D8",
+    "blue_soft": "#0E5CC7",
+    "blue_glow": "#19A6FF",
     "yellow": "#FFD400",
     "yellow_2": "#FFB800",
-    "white": "#F8FBFF",
+    "yellow_dark": "#7A5A00",
+    "white": "#F7FBFF",
     "muted": "#A8B7CC",
-    "muted_2": "#70829C",
-    "border": "#0E6BFF",
-    "success": "#20E3A2",
+    "muted_2": "#71829B",
+    "success": "#22E6A8",
     "error": "#FF4D6D",
 }
-
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
 
-class GlowButton(ctk.CTkButton):
-    """Small helper button with consistent hover behavior."""
+def resource_path(relative_path: str) -> str:
+    """Support normal Python runs and PyInstaller one-file builds."""
+    base_path = getattr(sys, "_MEIPASS", os.path.abspath("."))
+    return os.path.join(base_path, relative_path)
 
+
+class GlowButton(ctk.CTkButton):
     def __init__(self, master, variant="blue", **kwargs):
         if variant == "yellow":
-            colors = {
+            base = {
                 "fg_color": COLORS["yellow"],
                 "hover_color": COLORS["yellow_2"],
-                "text_color": "#06152B",
+                "text_color": COLORS["bg_dark"],
+                "border_color": "#FFF06A",
+            }
+        elif variant == "outline_yellow":
+            base = {
+                "fg_color": COLORS["panel_3"],
+                "hover_color": COLORS["yellow_dark"],
+                "text_color": COLORS["yellow"],
                 "border_color": COLORS["yellow"],
             }
         else:
-            colors = {
+            base = {
                 "fg_color": COLORS["panel_2"],
-                "hover_color": COLORS["blue_2"],
+                "hover_color": COLORS["blue_soft"],
                 "text_color": COLORS["white"],
                 "border_color": COLORS["blue"],
             }
-        colors.update(kwargs)
+        base.update(kwargs)
         super().__init__(
             master,
-            corner_radius=8,
+            corner_radius=7,
             border_width=2,
             font=ctk.CTkFont(family="Segoe UI", size=14, weight="bold"),
-            **colors,
+            **base,
         )
+
+
+class DecoLine(ctk.CTkCanvas):
+    """Small decorative angular line strip like the mockup."""
+    def __init__(self, master, height=40, **kwargs):
+        super().__init__(master, height=height, highlightthickness=0, bg=COLORS["bg"], **kwargs)
+        self.bind("<Configure>", self._draw)
+
+    def _draw(self, _event=None):
+        self.delete("all")
+        w = self.winfo_width()
+        h = self.winfo_height()
+        if w < 50:
+            return
+        y = h // 2
+        # yellow angular rails
+        self.create_line(20, y, w * 0.35, y, w * 0.38, 6, w * 0.62, 6, w * 0.65, y, w - 20, y,
+                         fill=COLORS["yellow"], width=3)
+        # blue secondary rails
+        self.create_line(20, y + 7, w * 0.33, y + 7, w * 0.36, h - 6, w * 0.64, h - 6,
+                         w * 0.67, y + 7, w - 20, y + 7, fill=COLORS["blue"], width=2)
 
 
 class TuneVaultApp(ctk.CTk):
@@ -87,15 +119,28 @@ class TuneVaultApp(ctk.CTk):
         super().__init__()
 
         self.title("TuneVault")
-        self.geometry("1120x760")
-        self.minsize(980, 680)
-        self.configure(fg_color=COLORS["bg"])
+        self.geometry("1220x760")
+        self.minsize(1060, 680)
+        self.configure(fg_color=COLORS["bg_dark"])
 
-        # Backend
+        # Use custom titlebar to get much closer to the mockup.
+        # The app still has minimize/maximize/close buttons inside the custom frame.
+        self.overrideredirect(True)
+        self._drag_start_x = 0
+        self._drag_start_y = 0
+        self._is_maximized = False
+        self._normal_geometry = None
+
+        icon_path = resource_path("tunevault.ico")
+        if os.path.exists(icon_path):
+            try:
+                self.iconbitmap(icon_path)
+            except Exception:
+                pass
+
         self.db = TuneVaultDB()
         self.core = TuneVaultCore(self.db)
 
-        # State
         self.current_videos = []
         self.track_entries = []
         self.is_downloading = False
@@ -105,9 +150,40 @@ class TuneVaultApp(ctk.CTk):
         self._check_deps()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-    # -----------------------------
+    # ------------------------------------------------------------------
+    # Window chrome
+    # ------------------------------------------------------------------
+    def _start_move(self, event):
+        self._drag_start_x = event.x
+        self._drag_start_y = event.y
+
+    def _do_move(self, event):
+        if self._is_maximized:
+            return
+        x = self.winfo_x() + event.x - self._drag_start_x
+        y = self.winfo_y() + event.y - self._drag_start_y
+        self.geometry(f"+{x}+{y}")
+
+    def _minimize(self):
+        self.overrideredirect(False)
+        self.iconify()
+        self.after(250, lambda: self.overrideredirect(True))
+
+    def _toggle_maximize(self):
+        if self._is_maximized:
+            if self._normal_geometry:
+                self.geometry(self._normal_geometry)
+            self._is_maximized = False
+        else:
+            self._normal_geometry = self.geometry()
+            sw = self.winfo_screenwidth()
+            sh = self.winfo_screenheight()
+            self.geometry(f"{sw}x{sh}+0+0")
+            self._is_maximized = True
+
+    # ------------------------------------------------------------------
     # UI Layout
-    # -----------------------------
+    # ------------------------------------------------------------------
     def _build_shell(self):
         self.outer = ctk.CTkFrame(
             self,
@@ -116,38 +192,53 @@ class TuneVaultApp(ctk.CTk):
             border_width=2,
             corner_radius=14,
         )
-        self.outer.pack(fill="both", expand=True, padx=10, pady=10)
+        self.outer.pack(fill="both", expand=True, padx=4, pady=4)
 
-        self._build_top_bar()
+        self._build_titlebar()
         self._build_header()
         self._build_url_panel()
-        self._build_tabs()
+        self._build_content_panel()
         self._build_status_area()
 
-    def _build_top_bar(self):
-        top = ctk.CTkFrame(self.outer, fg_color=COLORS["bg"], height=42, corner_radius=12)
-        top.pack(fill="x", padx=12, pady=(8, 0))
-        top.pack_propagate(False)
+    def _build_titlebar(self):
+        titlebar = ctk.CTkFrame(self.outer, fg_color=COLORS["panel_3"], height=48, corner_radius=12)
+        titlebar.pack(fill="x", padx=8, pady=(8, 0))
+        titlebar.pack_propagate(False)
+        titlebar.bind("<ButtonPress-1>", self._start_move)
+        titlebar.bind("<B1-Motion>", self._do_move)
 
         ctk.CTkLabel(
-            top,
+            titlebar,
             text="⚡",
             text_color=COLORS["yellow"],
-            font=ctk.CTkFont(size=22, weight="bold"),
-        ).pack(side="left", padx=(8, 12))
+            font=ctk.CTkFont(size=26, weight="bold"),
+        ).pack(side="left", padx=(14, 12))
 
-        ctk.CTkFrame(top, fg_color=COLORS["yellow"], height=3, width=330).pack(
-            side="left", padx=6
-        )
-        ctk.CTkLabel(
-            top,
+        DecoLine(titlebar, height=44).pack(side="left", fill="x", expand=True)
+
+        title = ctk.CTkLabel(
+            titlebar,
             text="T U N E V A U L T",
             text_color=COLORS["white"],
-            font=ctk.CTkFont(family="Segoe UI", size=18, weight="bold"),
-        ).pack(side="left", padx=16)
-        ctk.CTkFrame(top, fg_color=COLORS["yellow"], height=3, width=330).pack(
-            side="left", padx=6, fill="x", expand=True
+            font=ctk.CTkFont(family="Segoe UI", size=19, weight="bold"),
         )
+        title.place(relx=0.5, rely=0.5, anchor="center")
+        title.bind("<ButtonPress-1>", self._start_move)
+        title.bind("<B1-Motion>", self._do_move)
+
+        for text, cmd in [("—", self._minimize), ("□", self._toggle_maximize), ("✕", self._on_close)]:
+            ctk.CTkButton(
+                titlebar,
+                text=text,
+                width=38,
+                height=32,
+                corner_radius=4,
+                fg_color=COLORS["panel_3"],
+                hover_color=COLORS["blue_soft"] if text != "✕" else "#7A1127",
+                text_color=COLORS["white"],
+                command=cmd,
+                font=ctk.CTkFont(size=17, weight="bold"),
+            ).pack(side="right", padx=(0, 4))
 
     def _build_header(self):
         header = ctk.CTkFrame(
@@ -156,34 +247,44 @@ class TuneVaultApp(ctk.CTk):
             border_color=COLORS["blue"],
             border_width=1,
             corner_radius=10,
-            height=88,
+            height=108,
         )
-        header.pack(fill="x", padx=18, pady=(8, 0))
+        header.pack(fill="x", padx=16, pady=(8, 0))
         header.pack_propagate(False)
 
-        logo = ctk.CTkLabel(
-            header,
-            text="TUNEVAULT",
+        logo_wrap = ctk.CTkFrame(header, fg_color="transparent")
+        logo_wrap.pack(side="left", padx=(24, 28), pady=10)
+
+        logo_row = ctk.CTkFrame(logo_wrap, fg_color="transparent")
+        logo_row.pack()
+        ctk.CTkLabel(
+            logo_row,
+            text="TUNE",
+            text_color=COLORS["white"],
+            font=ctk.CTkFont(family="Segoe UI Black", size=46, weight="bold"),
+        ).pack(side="left")
+        ctk.CTkLabel(
+            logo_row,
+            text="VAULT",
             text_color=COLORS["yellow"],
-            font=ctk.CTkFont(family="Segoe UI Black", size=44, weight="bold"),
-        )
-        logo.pack(side="left", padx=(24, 28), pady=8)
+            font=ctk.CTkFont(family="Segoe UI Black", size=46, weight="bold"),
+        ).pack(side="left")
 
         ctk.CTkLabel(
             header,
             text="YouTube to MP3 Personal Music Library",
             text_color=COLORS["muted"],
-            font=ctk.CTkFont(family="Segoe UI", size=17, weight="bold"),
-        ).pack(side="left", pady=28)
+            font=ctk.CTkFont(family="Segoe UI", size=18, weight="bold"),
+        ).pack(side="left", pady=38)
 
         GlowButton(
             header,
-            text="OPTIONS  ⚙",
-            width=145,
-            height=42,
+            text="OPTIONS   ⚙",
+            width=165,
+            height=48,
             variant="blue",
             command=self._open_settings,
-        ).pack(side="right", padx=20)
+        ).pack(side="right", padx=22)
 
     def _build_url_panel(self):
         panel = ctk.CTkFrame(
@@ -193,14 +294,23 @@ class TuneVaultApp(ctk.CTk):
             border_width=1,
             corner_radius=10,
         )
-        panel.pack(fill="x", padx=18, pady=(8, 0))
+        panel.pack(fill="x", padx=16, pady=(8, 0))
 
+        label_row = ctk.CTkFrame(panel, fg_color="transparent")
+        label_row.pack(fill="x", padx=22, pady=(14, 4))
         ctk.CTkLabel(
-            panel,
+            label_row,
+            text="🔗",
+            width=36,
+            text_color=COLORS["blue_glow"],
+            font=ctk.CTkFont(size=20, weight="bold"),
+        ).pack(side="left")
+        ctk.CTkLabel(
+            label_row,
             text="Paste a YouTube URL (video or playlist):",
             text_color=COLORS["yellow"],
-            font=ctk.CTkFont(family="Segoe UI", size=17, weight="bold"),
-        ).pack(anchor="w", padx=22, pady=(16, 6))
+            font=ctk.CTkFont(family="Segoe UI", size=18, weight="bold"),
+        ).pack(side="left")
 
         row = ctk.CTkFrame(panel, fg_color="transparent")
         row.pack(fill="x", padx=22, pady=(0, 18))
@@ -209,91 +319,85 @@ class TuneVaultApp(ctk.CTk):
         self.url_entry = ctk.CTkEntry(
             row,
             textvariable=self.url_var,
-            height=48,
-            corner_radius=8,
-            fg_color=COLORS["bg"],
+            height=54,
+            corner_radius=7,
+            fg_color=COLORS["bg_dark"],
             border_color=COLORS["blue"],
             border_width=2,
             text_color=COLORS["white"],
             placeholder_text="https://www.youtube.com/watch?v=...",
             placeholder_text_color=COLORS["muted_2"],
-            font=ctk.CTkFont(family="Segoe UI", size=18),
+            font=ctk.CTkFont(family="Segoe UI", size=20),
         )
         self.url_entry.pack(side="left", fill="x", expand=True)
         self.url_entry.bind("<Return>", lambda _event: self._on_fetch())
 
-        GlowButton(
-            row,
-            text="PASTE",
-            width=120,
-            height=48,
-            variant="blue",
-            command=self._paste_clipboard,
-        ).pack(side="left", padx=(14, 0))
+        GlowButton(row, text="📋  PASTE", width=145, height=54, variant="blue", command=self._paste_clipboard).pack(side="left", padx=(16, 0))
 
-        self.fetch_btn = GlowButton(
-            row,
-            text="⬇  FETCH",
-            width=145,
-            height=48,
-            variant="yellow",
-            command=self._on_fetch,
-        )
-        self.fetch_btn.pack(side="left", padx=(14, 0))
+        self.fetch_btn = GlowButton(row, text="⬇  FETCH", width=165, height=54, variant="yellow", command=self._on_fetch)
+        self.fetch_btn.pack(side="left", padx=(16, 0))
 
-    def _build_tabs(self):
-        self.tabview = ctk.CTkTabview(
+    def _build_content_panel(self):
+        self.content = ctk.CTkFrame(
             self.outer,
             fg_color=COLORS["panel_3"],
-            segmented_button_fg_color=COLORS["panel_2"],
-            segmented_button_selected_color=COLORS["yellow"],
-            segmented_button_selected_hover_color=COLORS["yellow_2"],
-            segmented_button_unselected_color=COLORS["panel_2"],
-            segmented_button_unselected_hover_color=COLORS["blue_2"],
-            text_color=COLORS["white"],
             border_color=COLORS["blue"],
             border_width=2,
-            corner_radius=10,
+            corner_radius=12,
         )
-        self.tabview.pack(fill="both", expand=True, padx=18, pady=(10, 0))
+        self.content.pack(fill="both", expand=True, padx=16, pady=(10, 0))
 
-        self.download_tab = self.tabview.add("⬇  DOWNLOAD")
-        self.library_tab = self.tabview.add("♫  LIBRARY")
-        self.download_tab.configure(fg_color=COLORS["panel_3"])
-        self.library_tab.configure(fg_color=COLORS["panel_3"])
+        self._build_tabs_header()
+        self._build_download_area()
+        self._build_library_area()
+        self._show_download_tab()
 
-        self._build_download_tab()
-        self._build_library_tab()
+    def _build_tabs_header(self):
+        self.tabs = ctk.CTkFrame(self.content, fg_color="transparent", height=58)
+        self.tabs.pack(fill="x", padx=14, pady=(12, 0))
+        self.tabs.pack_propagate(False)
 
-    def _build_download_tab(self):
+        self.download_tab_btn = GlowButton(
+            self.tabs,
+            text="⬇  DOWNLOAD",
+            width=220,
+            height=48,
+            variant="outline_yellow",
+            command=self._show_download_tab,
+        )
+        self.download_tab_btn.pack(side="left")
+
+        self.library_tab_btn = GlowButton(
+            self.tabs,
+            text="♫  LIBRARY",
+            width=200,
+            height=48,
+            variant="blue",
+            command=self._show_library_tab,
+        )
+        self.library_tab_btn.pack(side="left", padx=(8, 0))
+
+    def _build_download_area(self):
+        self.download_area = ctk.CTkFrame(self.content, fg_color="transparent")
+
         header = ctk.CTkFrame(
-            self.download_tab,
+            self.download_area,
             fg_color=COLORS["panel"],
             border_color=COLORS["blue"],
             border_width=1,
-            corner_radius=8,
-            height=42,
+            corner_radius=6,
+            height=48,
         )
-        header.pack(fill="x", padx=10, pady=(10, 0))
+        header.pack(fill="x", padx=14, pady=(0, 0))
         header.pack_propagate(False)
 
-        for text, width, anchor in [
-            ("#", 70, "center"),
-            ("TITLE", 620, "w"),
-            ("DURATION", 130, "center"),
-            ("STATUS", 160, "center"),
-        ]:
-            ctk.CTkLabel(
-                header,
-                text=text,
-                width=width,
-                anchor=anchor,
-                text_color=COLORS["yellow"],
-                font=ctk.CTkFont(size=15, weight="bold"),
-            ).pack(side="left", padx=4)
+        self._table_label(header, "#", 75, COLORS["yellow"], "center").pack(side="left")
+        self._table_label(header, "TITLE", 680, COLORS["yellow"], "w").pack(side="left", fill="x", expand=True)
+        self._table_label(header, "DURATION", 140, COLORS["yellow"], "center").pack(side="left")
+        self._table_label(header, "STATUS", 165, COLORS["yellow"], "center").pack(side="left")
 
         self.scroll_frame = ctk.CTkScrollableFrame(
-            self.download_tab,
+            self.download_area,
             fg_color=COLORS["bg"],
             scrollbar_button_color=COLORS["panel_2"],
             scrollbar_button_hover_color=COLORS["blue"],
@@ -301,86 +405,76 @@ class TuneVaultApp(ctk.CTk):
             border_width=1,
             corner_radius=8,
         )
-        self.scroll_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self.scroll_frame.pack(fill="both", expand=True, padx=14, pady=(0, 12))
 
         self.placeholder_label = ctk.CTkLabel(
             self.scroll_frame,
             text="\n\nPaste a YouTube link above and click FETCH\n\nto preview tracks before downloading.",
             text_color=COLORS["muted"],
-            font=ctk.CTkFont(size=17, weight="bold"),
+            font=ctk.CTkFont(size=18, weight="bold"),
         )
-        self.placeholder_label.pack(pady=100)
+        self.placeholder_label.pack(pady=110)
+
+        btn_row = ctk.CTkFrame(self.download_area, fg_color="transparent", height=74)
+        btn_row.pack(fill="x", padx=14, pady=(0, 14))
+        btn_row.pack_propagate(False)
 
         self.download_all_btn = GlowButton(
-            self.download_tab,
+            btn_row,
             text="⬇  DOWNLOAD ALL TO LIBRARY",
-            width=420,
+            width=440,
             height=58,
-            variant="blue",
+            variant="outline_yellow",
             command=self._on_download_all,
         )
-        self.download_all_btn.pack(pady=(0, 18))
-        self.download_all_btn.pack_forget()
+        self.download_all_btn.place(relx=0.5, rely=0.5, anchor="center")
+        self.download_all_btn.place_forget()
 
-    def _build_library_tab(self):
-        top = ctk.CTkFrame(self.library_tab, fg_color="transparent")
-        top.pack(fill="x", padx=10, pady=10)
+    def _build_library_area(self):
+        self.library_area = ctk.CTkFrame(self.content, fg_color="transparent")
+
+        top = ctk.CTkFrame(self.library_area, fg_color="transparent")
+        top.pack(fill="x", padx=14, pady=(0, 10))
 
         self.lib_stats_label = ctk.CTkLabel(
             top,
             text="0 tracks - 0.0 MB",
             text_color=COLORS["yellow"],
-            font=ctk.CTkFont(size=15, weight="bold"),
+            font=ctk.CTkFont(size=16, weight="bold"),
         )
         self.lib_stats_label.pack(side="left")
 
-        GlowButton(
-            top,
-            text="OPEN MUSIC FOLDER",
-            width=170,
-            height=36,
-            variant="blue",
-            command=self._open_music_folder,
-        ).pack(side="right", padx=(8, 0))
-
-        GlowButton(
-            top,
-            text="REFRESH",
-            width=110,
-            height=36,
-            variant="blue",
-            command=self._refresh_library,
-        ).pack(side="right")
+        GlowButton(top, text="OPEN MUSIC FOLDER", width=190, height=38, variant="blue", command=self._open_music_folder).pack(side="right", padx=(8, 0))
+        GlowButton(top, text="REFRESH", width=120, height=38, variant="blue", command=self._refresh_library).pack(side="right")
 
         self.library_scroll = ctk.CTkScrollableFrame(
-            self.library_tab,
+            self.library_area,
             fg_color=COLORS["bg"],
             border_color=COLORS["blue"],
             border_width=1,
             corner_radius=8,
         )
-        self.library_scroll.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-        self._refresh_library()
+        self.library_scroll.pack(fill="both", expand=True, padx=14, pady=(0, 14))
 
     def _build_status_area(self):
         status_wrap = ctk.CTkFrame(self.outer, fg_color=COLORS["bg"], corner_radius=0)
-        status_wrap.pack(fill="x", padx=18, pady=(8, 14))
+        status_wrap.pack(fill="x", padx=16, pady=(8, 14))
 
         self.status_label = ctk.CTkLabel(
             status_wrap,
             text="Ready",
             text_color=COLORS["yellow"],
-            font=ctk.CTkFont(size=14, weight="bold"),
+            font=ctk.CTkFont(size=16, weight="bold"),
             anchor="w",
         )
-        self.status_label.pack(fill="x", pady=(0, 4))
+        self.status_label.pack(fill="x", pady=(0, 5))
 
         progress_row = ctk.CTkFrame(status_wrap, fg_color="transparent")
         progress_row.pack(fill="x")
 
         self.progress_bar = ctk.CTkProgressBar(
             progress_row,
-            height=22,
+            height=24,
             corner_radius=7,
             fg_color=COLORS["panel_2"],
             progress_color=COLORS["yellow"],
@@ -393,34 +487,50 @@ class TuneVaultApp(ctk.CTk):
         self.percent_label = ctk.CTkLabel(
             progress_row,
             text="0%",
-            width=58,
+            width=65,
             text_color=COLORS["yellow"],
-            font=ctk.CTkFont(size=15, weight="bold"),
+            font=ctk.CTkFont(size=17, weight="bold"),
         )
-        self.percent_label.pack(side="left", padx=(10, 0))
+        self.percent_label.pack(side="left", padx=(12, 0))
 
-    # -----------------------------
+    def _table_label(self, master, text, width, color, anchor):
+        return ctk.CTkLabel(
+            master,
+            text=text,
+            width=width,
+            anchor=anchor,
+            text_color=color,
+            font=ctk.CTkFont(size=16, weight="bold"),
+        )
+
+    def _show_download_tab(self):
+        self.library_area.pack_forget()
+        self.download_area.pack(fill="both", expand=True, padx=0, pady=0)
+        self.download_tab_btn.configure(border_color=COLORS["yellow"], text_color=COLORS["yellow"])
+        self.library_tab_btn.configure(border_color=COLORS["blue"], text_color=COLORS["muted"])
+
+    def _show_library_tab(self):
+        self.download_area.pack_forget()
+        self.library_area.pack(fill="both", expand=True, padx=0, pady=0)
+        self.download_tab_btn.configure(border_color=COLORS["blue"], text_color=COLORS["muted"])
+        self.library_tab_btn.configure(border_color=COLORS["yellow"], text_color=COLORS["yellow"])
+        self._refresh_library()
+
+    # ------------------------------------------------------------------
     # Actions
-    # -----------------------------
+    # ------------------------------------------------------------------
     def _check_deps(self):
         status = self.core.get_dependency_status()
         self.deps_ok = status.get("yt_dlp") and status.get("ffmpeg")
-        dep_text = (
-            f"yt-dlp: {'OK' if status.get('yt_dlp') else 'Missing'} | "
-            f"ffmpeg: {'OK' if status.get('ffmpeg') else 'Missing'}"
-        )
+        dep_text = f"yt-dlp: {'OK' if status.get('yt_dlp') else 'Missing'} | ffmpeg: {'OK' if status.get('ffmpeg') else 'Missing'}"
         self._set_status(dep_text)
-
         if not self.deps_ok:
             missing = []
             if not status.get("yt_dlp"):
                 missing.append("yt-dlp")
             if not status.get("ffmpeg"):
                 missing.append("ffmpeg")
-            messagebox.showwarning(
-                "Missing Dependencies",
-                "Missing: " + ", ".join(missing) + "\n\nInstall them or use the packaged installer build.",
-            )
+            messagebox.showwarning("Missing Dependencies", "Missing: " + ", ".join(missing) + "\n\nUse the packaged installer build or install dependencies.")
 
     def _set_status(self, message):
         if hasattr(self, "status_label"):
@@ -466,38 +576,30 @@ class TuneVaultApp(ctk.CTk):
             widget.destroy()
         self.current_videos = []
         self.track_entries = []
-        self.download_all_btn.pack_forget()
+        self.download_all_btn.place_forget()
 
     def _display_preview(self, videos):
         self._clear_preview()
         self.current_videos = videos
-
         for index, info in enumerate(videos, start=1):
             self._add_track_row(index, info)
-
-        self.download_all_btn.pack(pady=(0, 18))
+        self.download_all_btn.place(relx=0.5, rely=0.5, anchor="center")
         self._set_status(f"Found {len(videos)} track(s). Edit metadata and click DOWNLOAD.")
 
     def _add_track_row(self, index, info):
         row = ctk.CTkFrame(
             self.scroll_frame,
-            fg_color=COLORS["panel"],
+            fg_color=COLORS["row"] if index % 2 else COLORS["row_alt"],
             border_color=COLORS["blue"],
             border_width=1,
-            corner_radius=8,
+            corner_radius=7,
         )
         row.pack(fill="x", padx=8, pady=6)
 
         top = ctk.CTkFrame(row, fg_color="transparent")
         top.pack(fill="x", padx=12, pady=(10, 4))
 
-        ctk.CTkLabel(
-            top,
-            text=f"{index:02d}",
-            width=70,
-            text_color=COLORS["yellow"],
-            font=ctk.CTkFont(size=20, weight="bold"),
-        ).pack(side="left")
+        ctk.CTkLabel(top, text=f"{index:02d}", width=70, text_color=COLORS["yellow"], font=ctk.CTkFont(size=22, weight="bold")).pack(side="left")
 
         fields = {}
         title_var = tk.StringVar(value=info.title)
@@ -505,54 +607,38 @@ class TuneVaultApp(ctk.CTk):
             top,
             textvariable=title_var,
             height=38,
-            fg_color=COLORS["bg"],
+            fg_color=COLORS["bg_dark"],
             border_color=COLORS["panel_2"],
+            border_width=1,
             text_color=COLORS["white"],
             font=ctk.CTkFont(size=18, weight="bold"),
         )
         title_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
         fields["title"] = title_var
 
-        ctk.CTkLabel(
-            top,
-            text=info.duration_str,
-            width=120,
-            text_color=COLORS["yellow"],
-            font=ctk.CTkFont(size=20, weight="bold"),
-        ).pack(side="left")
+        ctk.CTkLabel(top, text=info.duration_str, width=140, text_color=COLORS["yellow"], font=ctk.CTkFont(size=21, weight="bold")).pack(side="left")
 
-        status_var = tk.StringVar(value="Already downloaded" if self.db.is_duplicate(info.video_id) else "Ready")
-        ctk.CTkLabel(
-            top,
-            textvariable=status_var,
-            width=160,
-            text_color=COLORS["success"] if self.db.is_duplicate(info.video_id) else COLORS["muted"],
-            font=ctk.CTkFont(size=14, weight="bold"),
-        ).pack(side="left")
+        is_dup = self.db.is_duplicate(info.video_id)
+        status_var = tk.StringVar(value="Downloaded ✓" if is_dup else "Ready")
+        ctk.CTkLabel(top, textvariable=status_var, width=165, text_color=COLORS["success"] if is_dup else COLORS["muted"], font=ctk.CTkFont(size=14, weight="bold")).pack(side="left")
 
         meta = ctk.CTkFrame(row, fg_color=COLORS["panel_3"], corner_radius=6)
         meta.pack(fill="x", padx=12, pady=(0, 10))
 
         for key, label, val, width in [
-            ("artist", "Artist", info.artist, 160),
-            ("album", "Album", info.album or "Singles", 150),
-            ("genre", "Genre", info.genre, 120),
-            ("year", "Year", info.year, 80),
+            ("artist", "Artist", info.artist, 170),
+            ("album", "Album", info.album or "Singles", 160),
+            ("genre", "Genre", info.genre, 130),
+            ("year", "Year", info.year, 90),
         ]:
-            ctk.CTkLabel(
-                meta,
-                text=f"{label}:",
-                text_color=COLORS["muted"],
-                font=ctk.CTkFont(size=13, weight="bold"),
-            ).pack(side="left", padx=(10, 4), pady=8)
-
+            ctk.CTkLabel(meta, text=f"{label}:", text_color=COLORS["muted"], font=ctk.CTkFont(size=13, weight="bold")).pack(side="left", padx=(10, 4), pady=8)
             var = tk.StringVar(value=val)
             ent = ctk.CTkEntry(
                 meta,
                 textvariable=var,
                 width=width,
                 height=30,
-                fg_color=COLORS["bg"],
+                fg_color=COLORS["bg_dark"],
                 border_color=COLORS["panel_2"],
                 text_color=COLORS["yellow"],
                 font=ctk.CTkFont(size=13, weight="bold"),
@@ -605,8 +691,8 @@ class TuneVaultApp(ctk.CTk):
 
     def _update_progress(self, message, overall_pct):
         self._set_status(message)
-        value = max(0, min(overall_pct, 100)) / 100
-        self.progress_bar.set(value)
+        overall_pct = max(0, min(overall_pct, 100))
+        self.progress_bar.set(overall_pct / 100)
         self.percent_label.configure(text=f"{overall_pct}%")
 
     def _download_complete(self):
@@ -621,7 +707,6 @@ class TuneVaultApp(ctk.CTk):
     def _refresh_library(self):
         if not hasattr(self, "library_scroll"):
             return
-
         for widget in self.library_scroll.winfo_children():
             widget.destroy()
 
@@ -631,45 +716,19 @@ class TuneVaultApp(ctk.CTk):
         self.lib_stats_label.configure(text=f"{stats['total_tracks']} tracks - {size_mb:.1f} MB")
 
         if not downloads:
-            ctk.CTkLabel(
-                self.library_scroll,
-                text="No downloads yet.",
-                text_color=COLORS["muted"],
-                font=ctk.CTkFont(size=16, weight="bold"),
-            ).pack(pady=60)
+            ctk.CTkLabel(self.library_scroll, text="No downloads yet.", text_color=COLORS["muted"], font=ctk.CTkFont(size=16, weight="bold")).pack(pady=60)
             return
 
         for row in downloads:
-            card = ctk.CTkFrame(
-                self.library_scroll,
-                fg_color=COLORS["panel"],
-                border_color=COLORS["blue"],
-                border_width=1,
-                corner_radius=8,
-            )
+            card = ctk.CTkFrame(self.library_scroll, fg_color=COLORS["row"], border_color=COLORS["blue"], border_width=1, corner_radius=8)
             card.pack(fill="x", padx=8, pady=5)
-
             title = row["title"] or "--"
             artist = row["artist"] or "--"
             album = row["album"] or "--"
             duration = row["duration"] or "--"
             date_str = row["downloaded_at"][:10] if row["downloaded_at"] else ""
-
-            ctk.CTkLabel(
-                card,
-                text=title,
-                anchor="w",
-                text_color=COLORS["white"],
-                font=ctk.CTkFont(size=15, weight="bold"),
-            ).pack(fill="x", padx=12, pady=(8, 2))
-
-            ctk.CTkLabel(
-                card,
-                text=f"Artist: {artist}    Album: {album}    Duration: {duration}    Added: {date_str}",
-                anchor="w",
-                text_color=COLORS["yellow"],
-                font=ctk.CTkFont(size=12, weight="bold"),
-            ).pack(fill="x", padx=12, pady=(0, 8))
+            ctk.CTkLabel(card, text=title, anchor="w", text_color=COLORS["white"], font=ctk.CTkFont(size=15, weight="bold")).pack(fill="x", padx=12, pady=(8, 2))
+            ctk.CTkLabel(card, text=f"Artist: {artist}    Album: {album}    Duration: {duration}    Added: {date_str}", anchor="w", text_color=COLORS["yellow"], font=ctk.CTkFont(size=12, weight="bold")).pack(fill="x", padx=12, pady=(0, 8))
 
     def _open_music_folder(self):
         music_dir = self.db.get_setting("music_dir")
@@ -681,54 +740,29 @@ class TuneVaultApp(ctk.CTk):
     def _open_settings(self):
         win = ctk.CTkToplevel(self)
         win.title("TuneVault Options")
-        win.geometry("560x390")
+        win.geometry("580x410")
         win.configure(fg_color=COLORS["bg"])
         win.transient(self)
         win.grab_set()
 
-        ctk.CTkLabel(
-            win,
-            text="OPTIONS",
-            text_color=COLORS["yellow"],
-            font=ctk.CTkFont(size=28, weight="bold"),
-        ).pack(pady=(20, 16))
-
+        ctk.CTkLabel(win, text="OPTIONS", text_color=COLORS["yellow"], font=ctk.CTkFont(size=30, weight="bold")).pack(pady=(20, 16))
         body = ctk.CTkFrame(win, fg_color=COLORS["panel"], border_color=COLORS["blue"], border_width=1)
         body.pack(fill="both", expand=True, padx=22, pady=(0, 18))
 
-        ctk.CTkLabel(
-            body,
-            text="Music Folder:",
-            text_color=COLORS["yellow"],
-            font=ctk.CTkFont(size=14, weight="bold"),
-        ).pack(anchor="w", padx=18, pady=(18, 4))
-
+        ctk.CTkLabel(body, text="Music Folder:", text_color=COLORS["yellow"], font=ctk.CTkFont(size=14, weight="bold")).pack(anchor="w", padx=18, pady=(18, 4))
         dir_row = ctk.CTkFrame(body, fg_color="transparent")
         dir_row.pack(fill="x", padx=18)
         dir_var = tk.StringVar(value=self.db.get_setting("music_dir") or "")
-        ctk.CTkEntry(
-            dir_row,
-            textvariable=dir_var,
-            height=38,
-            fg_color=COLORS["bg"],
-            border_color=COLORS["blue"],
-            text_color=COLORS["white"],
-        ).pack(side="left", fill="x", expand=True)
+        ctk.CTkEntry(dir_row, textvariable=dir_var, height=38, fg_color=COLORS["bg"], border_color=COLORS["blue"], text_color=COLORS["white"]).pack(side="left", fill="x", expand=True)
 
         def browse():
             path = filedialog.askdirectory()
             if path:
                 dir_var.set(path)
 
-        GlowButton(dir_row, text="BROWSE", width=100, height=38, variant="blue", command=browse).pack(side="left", padx=(8, 0))
+        GlowButton(dir_row, text="BROWSE", width=105, height=38, variant="blue", command=browse).pack(side="left", padx=(8, 0))
 
-        ctk.CTkLabel(
-            body,
-            text="Audio Quality (kbps):",
-            text_color=COLORS["yellow"],
-            font=ctk.CTkFont(size=14, weight="bold"),
-        ).pack(anchor="w", padx=18, pady=(18, 4))
-
+        ctk.CTkLabel(body, text="Audio Quality (kbps):", text_color=COLORS["yellow"], font=ctk.CTkFont(size=14, weight="bold")).pack(anchor="w", padx=18, pady=(18, 4))
         br_var = tk.StringVar(value=self.db.get_setting("bitrate") or "320")
         ctk.CTkOptionMenu(
             body,
@@ -739,15 +773,10 @@ class TuneVaultApp(ctk.CTk):
             button_hover_color=COLORS["yellow_2"],
             text_color=COLORS["white"],
             dropdown_fg_color=COLORS["panel"],
-            dropdown_hover_color=COLORS["blue_2"],
+            dropdown_hover_color=COLORS["blue_soft"],
         ).pack(anchor="w", padx=18, pady=(0, 14))
 
-        ctk.CTkLabel(
-            body,
-            text="Legal Notice: TuneVault is for personal use only. Use responsibly.",
-            text_color=COLORS["muted"],
-            font=ctk.CTkFont(size=12),
-        ).pack(anchor="w", padx=18, pady=(8, 16))
+        ctk.CTkLabel(body, text="Legal Notice: TuneVault is for personal use only. Use responsibly.", text_color=COLORS["muted"], font=ctk.CTkFont(size=12)).pack(anchor="w", padx=18, pady=(8, 16))
 
         def save():
             self.db.set_setting("music_dir", dir_var.get().strip())
@@ -755,7 +784,7 @@ class TuneVaultApp(ctk.CTk):
             win.destroy()
             self._set_status("Settings saved.")
 
-        GlowButton(body, text="SAVE OPTIONS", width=170, height=42, variant="yellow", command=save).pack(pady=(0, 18))
+        GlowButton(body, text="SAVE OPTIONS", width=180, height=44, variant="yellow", command=save).pack(pady=(0, 18))
 
     def _on_close(self):
         try:
