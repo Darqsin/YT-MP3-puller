@@ -61,6 +61,46 @@ def resource_path(relative_path: str) -> str:
     return os.path.join(base_path, relative_path)
 
 
+def clean_track_title(title: str) -> str:
+    """Remove common YouTube/video-label junk before display and filename creation."""
+    if not title:
+        return ""
+
+    cleaned = str(title).strip()
+
+    # Exact/common suffixes and tags that should not become part of the MP3 filename.
+    removable_patterns = [
+        r"\s*[-–—]?\s*\(\s*official\s+lyric\s+video\s*\)\s*$",
+        r"\s*[-–—]?\s*\[\s*official\s+lyric\s+video\s*\]\s*$",
+        r"\s*[-–—]?\s*\(\s*official\s+lyrics?\s*video\s*\)\s*$",
+        r"\s*[-–—]?\s*\(\s*lyrics?\s*\)\s*$",
+        r"\s*[-–—]?\s*\[\s*lyrics?\s*\]\s*$",
+        r"\s*[-–—]?\s*\(\s*official\s+video\s*\)\s*$",
+        r"\s*[-–—]?\s*\[\s*official\s+video\s*\]\s*$",
+        r"\s*[-–—]?\s*\(\s*music\s+video\s*\)\s*$",
+        r"\s*[-–—]?\s*\[\s*music\s+video\s*\]\s*$",
+        r"\s*[-–—]?\s*\(\s*official\s+audio\s*\)\s*$",
+        r"\s*[-–—]?\s*\[\s*official\s+audio\s*\]\s*$",
+        r"\s*[-–—]?\s*\(\s*audio\s*\)\s*$",
+        r"\s*[-–—]?\s*\[\s*audio\s*\]\s*$",
+        r"\s*[-–—]?\s*\(\s*hd\s*\)\s*$",
+        r"\s*[-–—]?\s*\[\s*hd\s*\]\s*$",
+    ]
+
+    import re
+    changed = True
+    while changed:
+        changed = False
+        for pattern in removable_patterns:
+            new_value = re.sub(pattern, "", cleaned, flags=re.IGNORECASE).strip()
+            if new_value != cleaned:
+                cleaned = new_value
+                changed = True
+
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" -–—_\t\r\n")
+    return cleaned or str(title).strip()
+
+
 def set_windows_app_id():
     """Make Windows treat TuneVault as a normal taskbar app with its own icon."""
     if sys.platform != "win32":
@@ -491,7 +531,7 @@ class TuneVaultApp(ctk.CTk):
 
         self.download_tab_btn = GlowButton(
             self.tabs,
-            text="⬇  DOWNLOAD",
+            text="☰  QUEUE",
             width=220,
             height=48,
             variant="outline_yellow",
@@ -541,7 +581,7 @@ class TuneVaultApp(ctk.CTk):
 
         self.placeholder_label = ctk.CTkLabel(
             self.scroll_frame,
-            text="\n\nPaste a YouTube link above and click FETCH\n\nto preview tracks before downloading.",
+            text="\n\nPaste a YouTube link above and click FETCH\n\nto add tracks to your download queue.",
             text_color=COLORS["muted"],
             font=ctk.CTkFont(size=18, weight="bold"),
         )
@@ -684,8 +724,7 @@ class TuneVaultApp(ctk.CTk):
             return
 
         self.fetch_btn.configure(state="disabled", text="FETCHING...")
-        self._clear_preview()
-        self._set_status("Fetching video info...")
+        self._set_status("Fetching video info and adding to queue...")
         self.progress_bar.set(0.05)
         self.percent_label.configure(text="5%")
 
@@ -697,7 +736,6 @@ class TuneVaultApp(ctk.CTk):
                 self.after(0, lambda e=str(exc): messagebox.showerror("Fetch Error", e))
             finally:
                 self.after(0, lambda: self.fetch_btn.configure(state="normal", text="⬇  FETCH"))
-                self.after(0, lambda: self._set_status("Ready"))
                 self.after(0, lambda: self.progress_bar.set(0))
                 self.after(0, lambda: self.percent_label.configure(text="0%"))
 
@@ -711,12 +749,30 @@ class TuneVaultApp(ctk.CTk):
         self.download_all_btn.place_forget()
 
     def _display_preview(self, videos):
-        self._clear_preview()
-        self.current_videos = videos
-        for index, info in enumerate(videos, start=1):
-            self._add_track_row(index, info)
-        self.download_all_btn.place(relx=0.5, rely=0.5, anchor="center")
-        self._set_status(f"Found {len(videos)} track(s). Edit metadata and click DOWNLOAD.")
+        if self.placeholder_label and self.placeholder_label.winfo_exists():
+            self.placeholder_label.destroy()
+
+        added = 0
+        skipped = 0
+        queued_ids = {entry["info"].video_id for entry in self.track_entries}
+
+        for info in videos:
+            if info.video_id in queued_ids:
+                skipped += 1
+                continue
+            info.title = clean_track_title(info.title)
+            self.current_videos.append(info)
+            self._add_track_row(len(self.track_entries) + 1, info)
+            queued_ids.add(info.video_id)
+            added += 1
+
+        if self.track_entries:
+            self.download_all_btn.place(relx=0.5, rely=0.5, anchor="center")
+
+        if skipped:
+            self._set_status(f"Added {added} track(s). Skipped {skipped} duplicate(s). Queue total: {len(self.track_entries)}.")
+        else:
+            self._set_status(f"Added {added} track(s). Queue total: {len(self.track_entries)}. Edit metadata, then download all.")
 
     def _add_track_row(self, index, info):
         row = ctk.CTkFrame(
@@ -734,6 +790,7 @@ class TuneVaultApp(ctk.CTk):
         ctk.CTkLabel(top, text=f"{index:02d}", width=70, text_color=COLORS["yellow"], font=ctk.CTkFont(size=22, weight="bold")).pack(side="left")
 
         fields = {}
+        info.title = clean_track_title(info.title)
         title_var = tk.StringVar(value=info.title)
         title_entry = ctk.CTkEntry(
             top,
@@ -792,7 +849,7 @@ class TuneVaultApp(ctk.CTk):
         for entry in self.track_entries:
             info = entry["info"]
             fields = entry["fields"]
-            info.title = fields["title"].get().strip() or info.title
+            info.title = clean_track_title(fields["title"].get().strip() or info.title)
             info.artist = fields["artist"].get().strip() or info.artist
             info.album = fields["album"].get().strip() or info.album
             info.genre = fields["genre"].get().strip()
