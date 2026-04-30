@@ -1,8 +1,13 @@
 """
-TuneVault - Desktop MP3 Stripper Application
-Blue / Yellow Futuristic GUI built with Tkinter.
+TuneVault - CustomTkinter Blue/Yellow Futuristic GUI
+Drop-in replacement for tunevault.py.
 
-Drop-in replacement for tunevault.py
+Requires:
+    pip install customtkinter
+
+Uses existing:
+    tunevault_core.py
+    tunevault_db.py
 """
 
 import os
@@ -10,646 +15,561 @@ import sys
 import threading
 import tkinter as tk
 import webbrowser
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox
+
+try:
+    import customtkinter as ctk
+except ImportError:
+    raise SystemExit(
+        "CustomTkinter is not installed. Run: python -m pip install customtkinter"
+    )
 
 from tunevault_core import TuneVaultCore
 from tunevault_db import TuneVaultDB
 
 
+# -----------------------------
+# Futuristic Blue / Yellow Theme
+# -----------------------------
 COLORS = {
-    "bg_dark": "#020B18",       # almost black navy
-    "bg_mid": "#06172E",        # deep blue panel
-    "bg_card": "#081F3F",       # card blue
-    "bg_card_2": "#0B2A55",     # lighter panel
-    "input_bg": "#031124",      # input field
-    "blue": "#1687FF",          # electric blue
-    "blue_soft": "#0E4C92",     # darker blue border
-    "yellow": "#FFD400",        # main yellow
-    "yellow_hover": "#FFE45C",  # hover yellow
-    "text_primary": "#F8FBFF",
-    "text_secondary": "#A9BBD6",
-    "text_muted": "#6F819E",
-    "success": "#00D084",
-    "warning": "#FFD400",
+    "bg": "#020B1A",
+    "bg_2": "#06152B",
+    "panel": "#071D3A",
+    "panel_2": "#0A274D",
+    "panel_3": "#031126",
+    "blue": "#168BFF",
+    "blue_2": "#0057D8",
+    "yellow": "#FFD400",
+    "yellow_2": "#FFB800",
+    "white": "#F8FBFF",
+    "muted": "#A8B7CC",
+    "muted_2": "#70829C",
+    "border": "#0E6BFF",
+    "success": "#20E3A2",
     "error": "#FF4D6D",
-    "border": "#1461B8",
-    "border_dim": "#0A315F",
 }
 
-FONT_TITLE = ("Segoe UI", 28, "bold")
-FONT_SECTION = ("Segoe UI", 13, "bold")
-FONT_BODY = ("Segoe UI", 10)
-FONT_BODY_BOLD = ("Segoe UI", 10, "bold")
-FONT_BUTTON = ("Segoe UI", 11, "bold")
+
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
 
 
-class TuneVaultApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("TuneVault -- YouTube to MP3")
-        self.root.geometry("1040x720")
-        self.root.minsize(850, 600)
-        self.root.configure(bg=COLORS["bg_dark"])
+class GlowButton(ctk.CTkButton):
+    """Small helper button with consistent hover behavior."""
 
+    def __init__(self, master, variant="blue", **kwargs):
+        if variant == "yellow":
+            colors = {
+                "fg_color": COLORS["yellow"],
+                "hover_color": COLORS["yellow_2"],
+                "text_color": "#06152B",
+                "border_color": COLORS["yellow"],
+            }
+        else:
+            colors = {
+                "fg_color": COLORS["panel_2"],
+                "hover_color": COLORS["blue_2"],
+                "text_color": COLORS["white"],
+                "border_color": COLORS["blue"],
+            }
+        colors.update(kwargs)
+        super().__init__(
+            master,
+            corner_radius=8,
+            border_width=2,
+            font=ctk.CTkFont(family="Segoe UI", size=14, weight="bold"),
+            **colors,
+        )
+
+
+class TuneVaultApp(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+
+        self.title("TuneVault")
+        self.geometry("1120x760")
+        self.minsize(980, 680)
+        self.configure(fg_color=COLORS["bg"])
+
+        # Backend
         self.db = TuneVaultDB()
         self.core = TuneVaultCore(self.db)
 
+        # State
         self.current_videos = []
         self.track_entries = []
         self.is_downloading = False
+        self.deps_ok = False
 
-        self._configure_styles()
+        self._build_shell()
         self._check_deps()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        self.app_shell = tk.Frame(
-            self.root,
-            bg=COLORS["bg_dark"],
-            highlightbackground=COLORS["border"],
-            highlightthickness=2,
+    # -----------------------------
+    # UI Layout
+    # -----------------------------
+    def _build_shell(self):
+        self.outer = ctk.CTkFrame(
+            self,
+            fg_color=COLORS["bg"],
+            border_color=COLORS["blue"],
+            border_width=2,
+            corner_radius=14,
         )
-        self.app_shell.pack(fill="both", expand=True, padx=10, pady=10)
+        self.outer.pack(fill="both", expand=True, padx=10, pady=10)
 
+        self._build_top_bar()
         self._build_header()
-        self._build_input_section()
-        self._build_notebook()
-        self._build_status_bar()
+        self._build_url_panel()
+        self._build_tabs()
+        self._build_status_area()
 
-        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+    def _build_top_bar(self):
+        top = ctk.CTkFrame(self.outer, fg_color=COLORS["bg"], height=42, corner_radius=12)
+        top.pack(fill="x", padx=12, pady=(8, 0))
+        top.pack_propagate(False)
 
-    # ------------------------- Styling -------------------------
+        ctk.CTkLabel(
+            top,
+            text="⚡",
+            text_color=COLORS["yellow"],
+            font=ctk.CTkFont(size=22, weight="bold"),
+        ).pack(side="left", padx=(8, 12))
 
-    def _configure_styles(self):
-        style = ttk.Style()
-        style.theme_use("clam")
-
-        style.configure(
-            "TNotebook",
-            background=COLORS["bg_dark"],
-            borderwidth=0,
-            tabmargins=[16, 5, 0, 0],
+        ctk.CTkFrame(top, fg_color=COLORS["yellow"], height=3, width=330).pack(
+            side="left", padx=6
         )
-        style.configure(
-            "TNotebook.Tab",
-            background=COLORS["bg_mid"],
-            foreground=COLORS["text_secondary"],
-            padding=[24, 10],
-            font=("Segoe UI", 11, "bold"),
-            bordercolor=COLORS["border_dim"],
-            lightcolor=COLORS["border_dim"],
-            darkcolor=COLORS["bg_dark"],
+        ctk.CTkLabel(
+            top,
+            text="T U N E V A U L T",
+            text_color=COLORS["white"],
+            font=ctk.CTkFont(family="Segoe UI", size=18, weight="bold"),
+        ).pack(side="left", padx=16)
+        ctk.CTkFrame(top, fg_color=COLORS["yellow"], height=3, width=330).pack(
+            side="left", padx=6, fill="x", expand=True
         )
-        style.map(
-            "TNotebook.Tab",
-            background=[("selected", COLORS["bg_card"])],
-            foreground=[("selected", COLORS["yellow"])],
-        )
-
-        style.configure(
-            "Cyber.Horizontal.TProgressbar",
-            troughcolor=COLORS["input_bg"],
-            background=COLORS["yellow"],
-            bordercolor=COLORS["border"],
-            lightcolor=COLORS["yellow_hover"],
-            darkcolor=COLORS["yellow"],
-            thickness=18,
-        )
-
-        style.configure(
-            "Treeview",
-            background=COLORS["bg_mid"],
-            foreground=COLORS["text_primary"],
-            fieldbackground=COLORS["bg_mid"],
-            bordercolor=COLORS["border"],
-            rowheight=30,
-            font=FONT_BODY,
-        )
-        style.configure(
-            "Treeview.Heading",
-            background=COLORS["bg_card_2"],
-            foreground=COLORS["yellow"],
-            font=FONT_BODY_BOLD,
-            relief="flat",
-        )
-        style.map(
-            "Treeview",
-            background=[("selected", COLORS["blue_soft"])],
-            foreground=[("selected", COLORS["text_primary"])],
-        )
-
-    def _make_button(self, parent, text, command, primary=False, width=None):
-        bg = COLORS["yellow"] if primary else COLORS["bg_card"]
-        fg = COLORS["bg_dark"] if primary else COLORS["yellow"]
-        hover_bg = COLORS["yellow_hover"] if primary else COLORS["blue_soft"]
-        hover_fg = COLORS["bg_dark"] if primary else COLORS["yellow"]
-
-        btn = tk.Button(
-            parent,
-            text=text,
-            font=FONT_BUTTON,
-            bg=bg,
-            fg=fg,
-            activebackground=hover_bg,
-            activeforeground=hover_fg,
-            relief="flat",
-            bd=0,
-            cursor="hand2",
-            padx=18,
-            pady=8,
-            width=width,
-            command=command,
-            highlightthickness=2,
-            highlightbackground=COLORS["border"],
-        )
-        btn.bind("<Enter>", lambda _e: btn.config(bg=hover_bg, fg=hover_fg))
-        btn.bind("<Leave>", lambda _e: btn.config(bg=bg, fg=fg))
-        return btn
-
-    # ------------------------- Dependency Check -------------------------
-
-    def _check_deps(self):
-        status = self.core.get_dependency_status()
-        self.deps_ok = status["yt_dlp"] and status["ffmpeg"]
-
-        if not self.deps_ok:
-            missing = []
-            if not status["yt_dlp"]:
-                missing.append("yt-dlp")
-            if not status["ffmpeg"]:
-                missing.append("ffmpeg")
-
-            messagebox.showwarning(
-                "Missing Dependencies",
-                "TuneVault could not find:\n\n"
-                + "\n".join(missing)
-                + "\n\nInstall them or use the bundled installer build.",
-            )
-
-    # ------------------------- Header -------------------------
 
     def _build_header(self):
-        header = tk.Frame(
-            self.app_shell,
-            bg=COLORS["bg_mid"],
-            height=110,
-            highlightbackground=COLORS["border_dim"],
-            highlightthickness=1,
+        header = ctk.CTkFrame(
+            self.outer,
+            fg_color=COLORS["panel_3"],
+            border_color=COLORS["blue"],
+            border_width=1,
+            corner_radius=10,
+            height=88,
         )
-        header.pack(fill="x", padx=8, pady=(8, 0))
+        header.pack(fill="x", padx=18, pady=(8, 0))
         header.pack_propagate(False)
 
-        top_line = tk.Frame(header, bg=COLORS["bg_mid"], height=20)
-        top_line.pack(fill="x")
-
-        tk.Label(
-            top_line,
-            text="⚡",
-            font=("Segoe UI", 14, "bold"),
-            bg=COLORS["bg_mid"],
-            fg=COLORS["yellow"],
-        ).pack(side="left", padx=(15, 6))
-
-        tk.Label(
-            top_line,
-            text="─" * 40,
-            font=("Consolas", 11),
-            bg=COLORS["bg_mid"],
-            fg=COLORS["yellow"],
-        ).pack(side="left")
-
-        tk.Label(
-            top_line,
-            text="T U N E V A U L T",
-            font=("Segoe UI", 10, "bold"),
-            bg=COLORS["bg_mid"],
-            fg=COLORS["text_primary"],
-        ).pack(side="left", padx=15)
-
-        tk.Label(
-            top_line,
-            text="─" * 40,
-            font=("Consolas", 11),
-            bg=COLORS["bg_mid"],
-            fg=COLORS["yellow"],
-        ).pack(side="left")
-
-        content = tk.Frame(header, bg=COLORS["bg_mid"])
-        content.pack(fill="both", expand=True)
-
-        title = tk.Label(
-            content,
+        logo = ctk.CTkLabel(
+            header,
             text="TUNEVAULT",
-            font=FONT_TITLE,
-            bg=COLORS["bg_mid"],
-            fg=COLORS["yellow"],
+            text_color=COLORS["yellow"],
+            font=ctk.CTkFont(family="Segoe UI Black", size=44, weight="bold"),
         )
-        title.pack(side="left", padx=(24, 28), pady=(8, 15))
+        logo.pack(side="left", padx=(24, 28), pady=8)
 
-        subtitle = tk.Label(
-            content,
+        ctk.CTkLabel(
+            header,
             text="YouTube to MP3 Personal Music Library",
-            font=("Segoe UI", 12),
-            bg=COLORS["bg_mid"],
-            fg=COLORS["text_secondary"],
+            text_color=COLORS["muted"],
+            font=ctk.CTkFont(family="Segoe UI", size=17, weight="bold"),
+        ).pack(side="left", pady=28)
+
+        GlowButton(
+            header,
+            text="OPTIONS  ⚙",
+            width=145,
+            height=42,
+            variant="blue",
+            command=self._open_settings,
+        ).pack(side="right", padx=20)
+
+    def _build_url_panel(self):
+        panel = ctk.CTkFrame(
+            self.outer,
+            fg_color=COLORS["panel"],
+            border_color=COLORS["blue"],
+            border_width=1,
+            corner_radius=10,
         )
-        subtitle.pack(side="left", pady=(14, 15))
+        panel.pack(fill="x", padx=18, pady=(8, 0))
 
-        settings_btn = self._make_button(
-            content,
-            "OPTIONS  ⚙",
-            self._open_settings,
-            primary=False,
-            width=12,
-        )
-        settings_btn.pack(side="right", padx=24, pady=(14, 18))
+        ctk.CTkLabel(
+            panel,
+            text="Paste a YouTube URL (video or playlist):",
+            text_color=COLORS["yellow"],
+            font=ctk.CTkFont(family="Segoe UI", size=17, weight="bold"),
+        ).pack(anchor="w", padx=22, pady=(16, 6))
 
-    # ------------------------- Input Section -------------------------
-
-    def _build_input_section(self):
-        input_panel = tk.Frame(
-            self.app_shell,
-            bg=COLORS["bg_mid"],
-            highlightbackground=COLORS["border_dim"],
-            highlightthickness=1,
-        )
-        input_panel.pack(fill="x", padx=8, pady=(0, 8))
-
-        label = tk.Label(
-            input_panel,
-            text="🔗  Paste a YouTube URL (video or playlist):",
-            font=FONT_SECTION,
-            bg=COLORS["bg_mid"],
-            fg=COLORS["yellow"],
-        )
-        label.pack(anchor="w", padx=24, pady=(16, 6))
-
-        entry_frame = tk.Frame(input_panel, bg=COLORS["bg_mid"])
-        entry_frame.pack(fill="x", padx=24, pady=(0, 18))
+        row = ctk.CTkFrame(panel, fg_color="transparent")
+        row.pack(fill="x", padx=22, pady=(0, 18))
 
         self.url_var = tk.StringVar()
-        self.url_entry = tk.Entry(
-            entry_frame,
+        self.url_entry = ctk.CTkEntry(
+            row,
             textvariable=self.url_var,
-            font=("Segoe UI", 14),
-            bg=COLORS["input_bg"],
-            fg=COLORS["text_primary"],
-            insertbackground=COLORS["yellow"],
-            relief="flat",
-            bd=10,
-            highlightthickness=2,
-            highlightbackground=COLORS["border"],
-            highlightcolor=COLORS["yellow"],
+            height=48,
+            corner_radius=8,
+            fg_color=COLORS["bg"],
+            border_color=COLORS["blue"],
+            border_width=2,
+            text_color=COLORS["white"],
+            placeholder_text="https://www.youtube.com/watch?v=...",
+            placeholder_text_color=COLORS["muted_2"],
+            font=ctk.CTkFont(family="Segoe UI", size=18),
         )
         self.url_entry.pack(side="left", fill="x", expand=True)
         self.url_entry.bind("<Return>", lambda _event: self._on_fetch())
 
-        paste_btn = self._make_button(entry_frame, "PASTE", self._paste_clipboard)
-        paste_btn.pack(side="left", padx=(12, 0))
+        GlowButton(
+            row,
+            text="PASTE",
+            width=120,
+            height=48,
+            variant="blue",
+            command=self._paste_clipboard,
+        ).pack(side="left", padx=(14, 0))
 
-        self.fetch_btn = self._make_button(entry_frame, "⬇  FETCH", self._on_fetch, primary=True, width=10)
-        self.fetch_btn.pack(side="left", padx=(12, 0))
+        self.fetch_btn = GlowButton(
+            row,
+            text="⬇  FETCH",
+            width=145,
+            height=48,
+            variant="yellow",
+            command=self._on_fetch,
+        )
+        self.fetch_btn.pack(side="left", padx=(14, 0))
 
-    def _paste_clipboard(self):
-        try:
-            text = self.root.clipboard_get()
-            self.url_var.set(text.strip())
-        except tk.TclError:
-            pass
+    def _build_tabs(self):
+        self.tabview = ctk.CTkTabview(
+            self.outer,
+            fg_color=COLORS["panel_3"],
+            segmented_button_fg_color=COLORS["panel_2"],
+            segmented_button_selected_color=COLORS["yellow"],
+            segmented_button_selected_hover_color=COLORS["yellow_2"],
+            segmented_button_unselected_color=COLORS["panel_2"],
+            segmented_button_unselected_hover_color=COLORS["blue_2"],
+            text_color=COLORS["white"],
+            border_color=COLORS["blue"],
+            border_width=2,
+            corner_radius=10,
+        )
+        self.tabview.pack(fill="both", expand=True, padx=18, pady=(10, 0))
 
-    # ------------------------- Main Tabs -------------------------
+        self.download_tab = self.tabview.add("⬇  DOWNLOAD")
+        self.library_tab = self.tabview.add("♫  LIBRARY")
+        self.download_tab.configure(fg_color=COLORS["panel_3"])
+        self.library_tab.configure(fg_color=COLORS["panel_3"])
 
-    def _build_notebook(self):
-        self.notebook = ttk.Notebook(self.app_shell)
-        self.notebook.pack(fill="both", expand=True, padx=18, pady=(0, 8))
-
-        self.preview_tab = tk.Frame(self.notebook, bg=COLORS["bg_dark"])
-        self.notebook.add(self.preview_tab, text="  ⬇ DOWNLOAD  ")
-
-        self.library_tab = tk.Frame(self.notebook, bg=COLORS["bg_dark"])
-        self.notebook.add(self.library_tab, text="  ♫ LIBRARY  ")
-
-        self._build_preview_tab()
+        self._build_download_tab()
         self._build_library_tab()
 
-    def _build_preview_tab(self):
-        self.track_list_frame = tk.Frame(
-            self.preview_tab,
-            bg=COLORS["bg_dark"],
-            highlightbackground=COLORS["border"],
-            highlightthickness=1,
+    def _build_download_tab(self):
+        header = ctk.CTkFrame(
+            self.download_tab,
+            fg_color=COLORS["panel"],
+            border_color=COLORS["blue"],
+            border_width=1,
+            corner_radius=8,
+            height=42,
         )
-        self.track_list_frame.pack(fill="both", expand=True, pady=(0, 8))
+        header.pack(fill="x", padx=10, pady=(10, 0))
+        header.pack_propagate(False)
 
-        self.canvas = tk.Canvas(
-            self.track_list_frame,
-            bg=COLORS["bg_dark"],
-            highlightthickness=0,
-        )
-        scrollbar = ttk.Scrollbar(
-            self.track_list_frame,
-            orient="vertical",
-            command=self.canvas.yview,
-        )
-        self.scrollable_frame = tk.Frame(self.canvas, bg=COLORS["bg_dark"])
-        self.scrollable_frame.bind(
-            "<Configure>",
-            lambda _event: self.canvas.configure(scrollregion=self.canvas.bbox("all")),
-        )
+        for text, width, anchor in [
+            ("#", 70, "center"),
+            ("TITLE", 620, "w"),
+            ("DURATION", 130, "center"),
+            ("STATUS", 160, "center"),
+        ]:
+            ctk.CTkLabel(
+                header,
+                text=text,
+                width=width,
+                anchor=anchor,
+                text_color=COLORS["yellow"],
+                font=ctk.CTkFont(size=15, weight="bold"),
+            ).pack(side="left", padx=4)
 
-        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
-        self.canvas.configure(yscrollcommand=scrollbar.set)
-        self.canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-
-        self.placeholder_label = tk.Label(
-            self.scrollable_frame,
-            text=(
-                "\n\n⚡ Paste a YouTube link above and click FETCH\n"
-                "to preview tracks before downloading.\n\n"
-                "Supports single videos and playlists."
-            ),
-            font=("Segoe UI", 13),
-            bg=COLORS["bg_dark"],
-            fg=COLORS["text_secondary"],
-            justify="center",
+        self.scroll_frame = ctk.CTkScrollableFrame(
+            self.download_tab,
+            fg_color=COLORS["bg"],
+            scrollbar_button_color=COLORS["panel_2"],
+            scrollbar_button_hover_color=COLORS["blue"],
+            border_color=COLORS["blue"],
+            border_width=1,
+            corner_radius=8,
         )
-        self.placeholder_label.pack(pady=90)
+        self.scroll_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
-        self.download_all_frame = tk.Frame(self.preview_tab, bg=COLORS["bg_dark"])
-        self.download_all_btn = self._make_button(
-            self.download_all_frame,
-            "⬇  DOWNLOAD ALL TO LIBRARY",
-            self._on_download_all,
-            primary=False,
-            width=28,
+        self.placeholder_label = ctk.CTkLabel(
+            self.scroll_frame,
+            text="\n\nPaste a YouTube link above and click FETCH\n\nto preview tracks before downloading.",
+            text_color=COLORS["muted"],
+            font=ctk.CTkFont(size=17, weight="bold"),
         )
-        self.download_all_btn.config(font=("Segoe UI", 13, "bold"), pady=12)
-        self.download_all_btn.pack(pady=8)
+        self.placeholder_label.pack(pady=100)
 
-        self.progress_frame = tk.Frame(self.preview_tab, bg=COLORS["bg_dark"])
-        self.progress_label = tk.Label(
-            self.progress_frame,
-            text="",
-            font=FONT_BODY_BOLD,
-            bg=COLORS["bg_dark"],
-            fg=COLORS["yellow"],
+        self.download_all_btn = GlowButton(
+            self.download_tab,
+            text="⬇  DOWNLOAD ALL TO LIBRARY",
+            width=420,
+            height=58,
+            variant="blue",
+            command=self._on_download_all,
         )
-        self.progress_label.pack(anchor="w", padx=6)
-
-        self.progress_bar = ttk.Progressbar(
-            self.progress_frame,
-            mode="determinate",
-            style="Cyber.Horizontal.TProgressbar",
-        )
-        self.progress_bar.pack(fill="x", pady=(6, 8), padx=6)
+        self.download_all_btn.pack(pady=(0, 18))
+        self.download_all_btn.pack_forget()
 
     def _build_library_tab(self):
-        top_bar = tk.Frame(self.library_tab, bg=COLORS["bg_dark"])
-        top_bar.pack(fill="x", pady=(5, 10))
+        top = ctk.CTkFrame(self.library_tab, fg_color="transparent")
+        top.pack(fill="x", padx=10, pady=10)
 
-        self.lib_stats_label = tk.Label(
-            top_bar,
-            text="",
-            font=FONT_BODY_BOLD,
-            bg=COLORS["bg_dark"],
-            fg=COLORS["yellow"],
+        self.lib_stats_label = ctk.CTkLabel(
+            top,
+            text="0 tracks - 0.0 MB",
+            text_color=COLORS["yellow"],
+            font=ctk.CTkFont(size=15, weight="bold"),
         )
         self.lib_stats_label.pack(side="left")
 
-        refresh_btn = self._make_button(top_bar, "REFRESH", self._refresh_library)
-        refresh_btn.pack(side="right")
+        GlowButton(
+            top,
+            text="OPEN MUSIC FOLDER",
+            width=170,
+            height=36,
+            variant="blue",
+            command=self._open_music_folder,
+        ).pack(side="right", padx=(8, 0))
 
-        open_folder_btn = self._make_button(top_bar, "OPEN MUSIC FOLDER", self._open_music_folder)
-        open_folder_btn.pack(side="right", padx=(0, 10))
+        GlowButton(
+            top,
+            text="REFRESH",
+            width=110,
+            height=36,
+            variant="blue",
+            command=self._refresh_library,
+        ).pack(side="right")
 
-        columns = ("title", "artist", "album", "duration", "date")
-        self.lib_tree = ttk.Treeview(self.library_tab, columns=columns, show="headings", height=18)
-        self.lib_tree.heading("title", text="TITLE")
-        self.lib_tree.heading("artist", text="ARTIST")
-        self.lib_tree.heading("album", text="ALBUM")
-        self.lib_tree.heading("duration", text="DURATION")
-        self.lib_tree.heading("date", text="DATE ADDED")
-
-        self.lib_tree.column("title", width=310)
-        self.lib_tree.column("artist", width=170)
-        self.lib_tree.column("album", width=130)
-        self.lib_tree.column("duration", width=85, anchor="center")
-        self.lib_tree.column("date", width=120, anchor="center")
-
-        lib_scroll = ttk.Scrollbar(self.library_tab, orient="vertical", command=self.lib_tree.yview)
-        self.lib_tree.configure(yscrollcommand=lib_scroll.set)
-        self.lib_tree.pack(side="left", fill="both", expand=True)
-        lib_scroll.pack(side="right", fill="y")
-
+        self.library_scroll = ctk.CTkScrollableFrame(
+            self.library_tab,
+            fg_color=COLORS["bg"],
+            border_color=COLORS["blue"],
+            border_width=1,
+            corner_radius=8,
+        )
+        self.library_scroll.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         self._refresh_library()
 
-    # ------------------------- Status Bar -------------------------
+    def _build_status_area(self):
+        status_wrap = ctk.CTkFrame(self.outer, fg_color=COLORS["bg"], corner_radius=0)
+        status_wrap.pack(fill="x", padx=18, pady=(8, 14))
 
-    def _build_status_bar(self):
-        self.status_bar = tk.Frame(
-            self.app_shell,
-            bg=COLORS["bg_mid"],
-            height=36,
-            highlightbackground=COLORS["border_dim"],
-            highlightthickness=1,
-        )
-        self.status_bar.pack(fill="x", side="bottom", padx=8, pady=(0, 8))
-        self.status_bar.pack_propagate(False)
-
-        self.status_label = tk.Label(
-            self.status_bar,
+        self.status_label = ctk.CTkLabel(
+            status_wrap,
             text="Ready",
-            font=FONT_BODY_BOLD,
-            bg=COLORS["bg_mid"],
-            fg=COLORS["yellow"],
+            text_color=COLORS["yellow"],
+            font=ctk.CTkFont(size=14, weight="bold"),
+            anchor="w",
         )
-        self.status_label.pack(side="left", padx=15)
+        self.status_label.pack(fill="x", pady=(0, 4))
 
-        deps = self.core.get_dependency_status()
+        progress_row = ctk.CTkFrame(status_wrap, fg_color="transparent")
+        progress_row.pack(fill="x")
+
+        self.progress_bar = ctk.CTkProgressBar(
+            progress_row,
+            height=22,
+            corner_radius=7,
+            fg_color=COLORS["panel_2"],
+            progress_color=COLORS["yellow"],
+            border_color=COLORS["blue"],
+            border_width=1,
+        )
+        self.progress_bar.pack(side="left", fill="x", expand=True)
+        self.progress_bar.set(0)
+
+        self.percent_label = ctk.CTkLabel(
+            progress_row,
+            text="0%",
+            width=58,
+            text_color=COLORS["yellow"],
+            font=ctk.CTkFont(size=15, weight="bold"),
+        )
+        self.percent_label.pack(side="left", padx=(10, 0))
+
+    # -----------------------------
+    # Actions
+    # -----------------------------
+    def _check_deps(self):
+        status = self.core.get_dependency_status()
+        self.deps_ok = status.get("yt_dlp") and status.get("ffmpeg")
         dep_text = (
-            f"yt-dlp: {'OK' if deps['yt_dlp'] else 'Missing'}   |   "
-            f"ffmpeg: {'OK' if deps['ffmpeg'] else 'Missing'}"
+            f"yt-dlp: {'OK' if status.get('yt_dlp') else 'Missing'} | "
+            f"ffmpeg: {'OK' if status.get('ffmpeg') else 'Missing'}"
         )
-        dep_label = tk.Label(
-            self.status_bar,
-            text=dep_text,
-            font=FONT_BODY,
-            bg=COLORS["bg_mid"],
-            fg=COLORS["text_secondary"],
-        )
-        dep_label.pack(side="right", padx=15)
+        self._set_status(dep_text)
 
-    # ------------------------- Actions -------------------------
+        if not self.deps_ok:
+            missing = []
+            if not status.get("yt_dlp"):
+                missing.append("yt-dlp")
+            if not status.get("ffmpeg"):
+                missing.append("ffmpeg")
+            messagebox.showwarning(
+                "Missing Dependencies",
+                "Missing: " + ", ".join(missing) + "\n\nInstall them or use the packaged installer build.",
+            )
 
-    def _set_status(self, msg):
-        self.status_label.config(text=msg)
+    def _set_status(self, message):
+        if hasattr(self, "status_label"):
+            self.status_label.configure(text=message)
+
+    def _paste_clipboard(self):
+        try:
+            self.url_var.set(self.clipboard_get().strip())
+        except tk.TclError:
+            pass
 
     def _on_fetch(self):
         url = self.url_var.get().strip()
-
         if not url:
-            messagebox.showinfo("No URL", "Please paste a YouTube URL first.")
+            messagebox.showinfo("No URL", "Paste a YouTube URL first.")
             return
-
         if not self.deps_ok:
-            messagebox.showerror(
-                "Missing Dependencies",
-                "yt-dlp and/or ffmpeg are not installed. Cannot proceed.",
-            )
+            messagebox.showerror("Missing Dependencies", "yt-dlp and/or ffmpeg are missing.")
             return
 
-        self.fetch_btn.config(state="disabled", text="FETCHING...")
-        self._set_status("Fetching video info...")
+        self.fetch_btn.configure(state="disabled", text="FETCHING...")
         self._clear_preview()
+        self._set_status("Fetching video info...")
+        self.progress_bar.set(0.05)
+        self.percent_label.configure(text="5%")
 
-        def do_fetch():
+        def worker():
             try:
                 videos = self.core.fetch_video_info(url)
-                self.root.after(0, lambda: self._display_preview(videos))
+                self.after(0, lambda: self._display_preview(videos))
             except Exception as exc:
-                self.root.after(0, lambda err=str(exc): messagebox.showerror("Fetch Error", err))
+                self.after(0, lambda e=str(exc): messagebox.showerror("Fetch Error", e))
             finally:
-                self.root.after(0, lambda: self.fetch_btn.config(state="normal", text="⬇  FETCH"))
-                self.root.after(0, lambda: self._set_status("Ready"))
+                self.after(0, lambda: self.fetch_btn.configure(state="normal", text="⬇  FETCH"))
+                self.after(0, lambda: self._set_status("Ready"))
+                self.after(0, lambda: self.progress_bar.set(0))
+                self.after(0, lambda: self.percent_label.configure(text="0%"))
 
-        threading.Thread(target=do_fetch, daemon=True).start()
+        threading.Thread(target=worker, daemon=True).start()
 
     def _clear_preview(self):
-        for widget in self.scrollable_frame.winfo_children():
+        for widget in self.scroll_frame.winfo_children():
             widget.destroy()
-
-        self.download_all_frame.pack_forget()
-        self.progress_frame.pack_forget()
         self.current_videos = []
         self.track_entries = []
+        self.download_all_btn.pack_forget()
 
     def _display_preview(self, videos):
         self._clear_preview()
         self.current_videos = videos
-        self.track_entries = []
 
-        # Header row like the mockup
-        header = tk.Frame(self.scrollable_frame, bg=COLORS["bg_card_2"])
-        header.pack(fill="x", padx=6, pady=(6, 0))
-        tk.Label(header, text="#", width=6, font=FONT_BODY_BOLD, bg=COLORS["bg_card_2"], fg=COLORS["yellow"]).pack(side="left", padx=(8, 0), pady=8)
-        tk.Label(header, text="TITLE", font=FONT_BODY_BOLD, bg=COLORS["bg_card_2"], fg=COLORS["yellow"], anchor="w").pack(side="left", fill="x", expand=True, pady=8)
-        tk.Label(header, text="DURATION", width=12, font=FONT_BODY_BOLD, bg=COLORS["bg_card_2"], fg=COLORS["yellow"]).pack(side="right", padx=(0, 12), pady=8)
+        for index, info in enumerate(videos, start=1):
+            self._add_track_row(index, info)
 
-        for i, info in enumerate(videos):
-            card = tk.Frame(
-                self.scrollable_frame,
-                bg=COLORS["bg_mid"],
-                padx=12,
-                pady=8,
-                highlightbackground=COLORS["border_dim"],
-                highlightthickness=1,
+        self.download_all_btn.pack(pady=(0, 18))
+        self._set_status(f"Found {len(videos)} track(s). Edit metadata and click DOWNLOAD.")
+
+    def _add_track_row(self, index, info):
+        row = ctk.CTkFrame(
+            self.scroll_frame,
+            fg_color=COLORS["panel"],
+            border_color=COLORS["blue"],
+            border_width=1,
+            corner_radius=8,
+        )
+        row.pack(fill="x", padx=8, pady=6)
+
+        top = ctk.CTkFrame(row, fg_color="transparent")
+        top.pack(fill="x", padx=12, pady=(10, 4))
+
+        ctk.CTkLabel(
+            top,
+            text=f"{index:02d}",
+            width=70,
+            text_color=COLORS["yellow"],
+            font=ctk.CTkFont(size=20, weight="bold"),
+        ).pack(side="left")
+
+        fields = {}
+        title_var = tk.StringVar(value=info.title)
+        title_entry = ctk.CTkEntry(
+            top,
+            textvariable=title_var,
+            height=38,
+            fg_color=COLORS["bg"],
+            border_color=COLORS["panel_2"],
+            text_color=COLORS["white"],
+            font=ctk.CTkFont(size=18, weight="bold"),
+        )
+        title_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        fields["title"] = title_var
+
+        ctk.CTkLabel(
+            top,
+            text=info.duration_str,
+            width=120,
+            text_color=COLORS["yellow"],
+            font=ctk.CTkFont(size=20, weight="bold"),
+        ).pack(side="left")
+
+        status_var = tk.StringVar(value="Already downloaded" if self.db.is_duplicate(info.video_id) else "Ready")
+        ctk.CTkLabel(
+            top,
+            textvariable=status_var,
+            width=160,
+            text_color=COLORS["success"] if self.db.is_duplicate(info.video_id) else COLORS["muted"],
+            font=ctk.CTkFont(size=14, weight="bold"),
+        ).pack(side="left")
+
+        meta = ctk.CTkFrame(row, fg_color=COLORS["panel_3"], corner_radius=6)
+        meta.pack(fill="x", padx=12, pady=(0, 10))
+
+        for key, label, val, width in [
+            ("artist", "Artist", info.artist, 160),
+            ("album", "Album", info.album or "Singles", 150),
+            ("genre", "Genre", info.genre, 120),
+            ("year", "Year", info.year, 80),
+        ]:
+            ctk.CTkLabel(
+                meta,
+                text=f"{label}:",
+                text_color=COLORS["muted"],
+                font=ctk.CTkFont(size=13, weight="bold"),
+            ).pack(side="left", padx=(10, 4), pady=8)
+
+            var = tk.StringVar(value=val)
+            ent = ctk.CTkEntry(
+                meta,
+                textvariable=var,
+                width=width,
+                height=30,
+                fg_color=COLORS["bg"],
+                border_color=COLORS["panel_2"],
+                text_color=COLORS["yellow"],
+                font=ctk.CTkFont(size=13, weight="bold"),
             )
-            card.pack(fill="x", padx=6, pady=(0, 2))
+            ent.pack(side="left", padx=(0, 8), pady=8)
+            fields[key] = var
 
-            top = tk.Frame(card, bg=COLORS["bg_mid"])
-            top.pack(fill="x")
-
-            num_label = tk.Label(
-                top,
-                text=f"{i + 1:02d}",
-                font=("Segoe UI", 14, "bold"),
-                bg=COLORS["bg_mid"],
-                fg=COLORS["yellow"],
-                width=5,
-            )
-            num_label.pack(side="left")
-
-            entry_data = {}
-
-            title_var = tk.StringVar(value=info.title)
-            title_entry = tk.Entry(
-                top,
-                textvariable=title_var,
-                font=("Segoe UI", 14, "bold"),
-                bg=COLORS["bg_mid"],
-                fg=COLORS["text_primary"],
-                insertbackground=COLORS["yellow"],
-                relief="flat",
-                bd=2,
-            )
-            title_entry.pack(side="left", fill="x", expand=True, padx=(10, 10))
-            entry_data["title"] = title_var
-
-            dur_label = tk.Label(
-                top,
-                text=info.duration_str,
-                font=("Segoe UI", 14, "bold"),
-                bg=COLORS["bg_mid"],
-                fg=COLORS["yellow"],
-                width=10,
-            )
-            dur_label.pack(side="right")
-
-            meta_frame = tk.Frame(card, bg=COLORS["bg_mid"])
-            meta_frame.pack(fill="x", pady=(8, 0))
-
-            for field_name, default_val, label_text in [
-                ("artist", info.artist, "Artist:"),
-                ("album", info.album, "Album:"),
-                ("genre", info.genre, "Genre:"),
-                ("year", info.year, "Year:"),
-            ]:
-                lbl = tk.Label(
-                    meta_frame,
-                    text=label_text,
-                    font=FONT_BODY_BOLD,
-                    bg=COLORS["bg_mid"],
-                    fg=COLORS["text_secondary"],
-                )
-                lbl.pack(side="left", padx=(18, 4))
-
-                var = tk.StringVar(value=default_val)
-                entry = tk.Entry(
-                    meta_frame,
-                    textvariable=var,
-                    font=FONT_BODY_BOLD,
-                    bg=COLORS["bg_mid"],
-                    fg=COLORS["yellow"],
-                    insertbackground=COLORS["yellow"],
-                    relief="flat",
-                    bd=1,
-                    width=14,
-                )
-                entry.pack(side="left", padx=(0, 8))
-                entry_data[field_name] = var
-
-            if self.db.is_duplicate(info.video_id):
-                dup_label = tk.Label(
-                    meta_frame,
-                    text="Downloaded  ✓",
-                    font=FONT_BODY_BOLD,
-                    bg=COLORS["bg_mid"],
-                    fg=COLORS["yellow"],
-                )
-                dup_label.pack(side="right", padx=12)
-
-            status_var = tk.StringVar(value="")
-            status_label = tk.Label(
-                card,
-                textvariable=status_var,
-                font=FONT_BODY_BOLD,
-                bg=COLORS["bg_mid"],
-                fg=COLORS["success"],
-            )
-            status_label.pack(anchor="e")
-
-            self.track_entries.append({"info": info, "fields": entry_data, "status_var": status_var})
-
-        self.download_all_frame.pack(fill="x", padx=5)
-        self._set_status(f"Found {len(videos)} track(s). Edit metadata and click Download.")
+        self.track_entries.append({"info": info, "fields": fields, "status_var": status_var})
 
     def _on_download_all(self):
-        if self.is_downloading:
+        if self.is_downloading or not self.track_entries:
             return
 
         self.is_downloading = True
-        self.download_all_btn.config(state="disabled", text="DOWNLOADING...")
-        self.progress_frame.pack(fill="x", padx=5, pady=(0, 5))
-        self.progress_bar["value"] = 0
+        self.download_all_btn.configure(state="disabled", text="DOWNLOADING...")
+        self.progress_bar.set(0)
+        self.percent_label.configure(text="0%")
 
         for entry in self.track_entries:
             info = entry["info"]
@@ -663,64 +583,93 @@ class TuneVaultApp:
         video_list = [entry["info"] for entry in self.track_entries]
         total = len(video_list)
 
-        def do_download():
+        def worker():
             for i, info in enumerate(video_list):
                 entry = self.track_entries[i]
+                self.after(0, lambda e=entry: e["status_var"].set("Downloading..."))
 
-                def progress_cb(stage, pct, msg, _entry=entry, _i=i):
+                def progress_cb(stage, pct, msg, _i=i, _entry=entry):
                     overall = int(((_i + pct / 100) / total) * 100)
-                    self.root.after(0, lambda m=msg, o=overall: self._update_progress(m, o))
+                    self.after(0, lambda m=msg, o=overall: self._update_progress(m, o))
                     if stage == "complete":
-                        self.root.after(0, lambda e=_entry: e["status_var"].set("Downloaded  ✓"))
+                        self.after(0, lambda e=_entry: e["status_var"].set("Downloaded ✓"))
 
                 try:
                     self.core.download_track(info, progress_callback=progress_cb)
                 except Exception as exc:
-                    self.root.after(
-                        0,
-                        lambda e=entry, err=str(exc): e["status_var"].set(f"Error: {err[:60]}"),
-                    )
+                    self.after(0, lambda e=entry, err=str(exc): e["status_var"].set(f"Error: {err[:45]}"))
 
-            self.root.after(0, self._download_complete)
+            self.after(0, self._download_complete)
 
-        threading.Thread(target=do_download, daemon=True).start()
+        threading.Thread(target=worker, daemon=True).start()
 
     def _update_progress(self, message, overall_pct):
-        self.progress_label.config(text=message)
-        self.progress_bar["value"] = overall_pct
         self._set_status(message)
+        value = max(0, min(overall_pct, 100)) / 100
+        self.progress_bar.set(value)
+        self.percent_label.configure(text=f"{overall_pct}%")
 
     def _download_complete(self):
         self.is_downloading = False
-        self.download_all_btn.config(state="normal", text="⬇  DOWNLOAD ALL TO LIBRARY")
-        self.progress_label.config(text="All downloads complete!")
-        self.progress_bar["value"] = 100
-        self._set_status("Downloads complete.")
+        self.download_all_btn.configure(state="normal", text="⬇  DOWNLOAD ALL TO LIBRARY")
+        self._set_status("All downloads complete!")
+        self.progress_bar.set(1)
+        self.percent_label.configure(text="100%")
         self._refresh_library()
-        messagebox.showinfo("Complete", "All tracks have been processed!")
+        messagebox.showinfo("Complete", "All tracks have been processed.")
 
     def _refresh_library(self):
-        for item in self.lib_tree.get_children():
-            self.lib_tree.delete(item)
+        if not hasattr(self, "library_scroll"):
+            return
+
+        for widget in self.library_scroll.winfo_children():
+            widget.destroy()
 
         downloads = self.db.get_all_downloads()
-        for row in downloads:
-            date_str = row["downloaded_at"][:10] if row["downloaded_at"] else ""
-            self.lib_tree.insert(
-                "",
-                "end",
-                values=(
-                    row["title"] or "--",
-                    row["artist"] or "--",
-                    row["album"] or "--",
-                    row["duration"] or "--",
-                    date_str,
-                ),
-            )
-
         stats = self.db.get_library_stats()
         size_mb = stats["total_size_bytes"] / (1024 * 1024)
-        self.lib_stats_label.config(text=f"♫ {stats['total_tracks']} tracks   •   {size_mb:.1f} MB")
+        self.lib_stats_label.configure(text=f"{stats['total_tracks']} tracks - {size_mb:.1f} MB")
+
+        if not downloads:
+            ctk.CTkLabel(
+                self.library_scroll,
+                text="No downloads yet.",
+                text_color=COLORS["muted"],
+                font=ctk.CTkFont(size=16, weight="bold"),
+            ).pack(pady=60)
+            return
+
+        for row in downloads:
+            card = ctk.CTkFrame(
+                self.library_scroll,
+                fg_color=COLORS["panel"],
+                border_color=COLORS["blue"],
+                border_width=1,
+                corner_radius=8,
+            )
+            card.pack(fill="x", padx=8, pady=5)
+
+            title = row["title"] or "--"
+            artist = row["artist"] or "--"
+            album = row["album"] or "--"
+            duration = row["duration"] or "--"
+            date_str = row["downloaded_at"][:10] if row["downloaded_at"] else ""
+
+            ctk.CTkLabel(
+                card,
+                text=title,
+                anchor="w",
+                text_color=COLORS["white"],
+                font=ctk.CTkFont(size=15, weight="bold"),
+            ).pack(fill="x", padx=12, pady=(8, 2))
+
+            ctk.CTkLabel(
+                card,
+                text=f"Artist: {artist}    Album: {album}    Duration: {duration}    Added: {date_str}",
+                anchor="w",
+                text_color=COLORS["yellow"],
+                font=ctk.CTkFont(size=12, weight="bold"),
+            ).pack(fill="x", padx=12, pady=(0, 8))
 
     def _open_music_folder(self):
         music_dir = self.db.get_setting("music_dir")
@@ -730,115 +679,91 @@ class TuneVaultApp:
             messagebox.showinfo("Folder Not Found", "Music folder has not been created yet.")
 
     def _open_settings(self):
-        settings_win = tk.Toplevel(self.root)
-        settings_win.title("TuneVault Settings")
-        settings_win.geometry("540x380")
-        settings_win.configure(bg=COLORS["bg_dark"])
-        settings_win.transient(self.root)
-        settings_win.grab_set()
+        win = ctk.CTkToplevel(self)
+        win.title("TuneVault Options")
+        win.geometry("560x390")
+        win.configure(fg_color=COLORS["bg"])
+        win.transient(self)
+        win.grab_set()
 
-        tk.Label(
-            settings_win,
+        ctk.CTkLabel(
+            win,
             text="OPTIONS",
-            font=("Segoe UI", 18, "bold"),
-            bg=COLORS["bg_dark"],
-            fg=COLORS["yellow"],
-        ).pack(pady=(18, 20))
+            text_color=COLORS["yellow"],
+            font=ctk.CTkFont(size=28, weight="bold"),
+        ).pack(pady=(20, 16))
 
-        dir_frame = tk.Frame(settings_win, bg=COLORS["bg_dark"])
-        dir_frame.pack(fill="x", padx=28, pady=5)
+        body = ctk.CTkFrame(win, fg_color=COLORS["panel"], border_color=COLORS["blue"], border_width=1)
+        body.pack(fill="both", expand=True, padx=22, pady=(0, 18))
 
-        tk.Label(
-            dir_frame,
+        ctk.CTkLabel(
+            body,
             text="Music Folder:",
-            font=FONT_BODY_BOLD,
-            bg=COLORS["bg_dark"],
-            fg=COLORS["text_secondary"],
-        ).pack(anchor="w")
+            text_color=COLORS["yellow"],
+            font=ctk.CTkFont(size=14, weight="bold"),
+        ).pack(anchor="w", padx=18, pady=(18, 4))
 
-        dir_var = tk.StringVar(value=self.db.get_setting("music_dir"))
-        dir_entry = tk.Entry(
-            dir_frame,
+        dir_row = ctk.CTkFrame(body, fg_color="transparent")
+        dir_row.pack(fill="x", padx=18)
+        dir_var = tk.StringVar(value=self.db.get_setting("music_dir") or "")
+        ctk.CTkEntry(
+            dir_row,
             textvariable=dir_var,
-            font=FONT_BODY,
-            bg=COLORS["input_bg"],
-            fg=COLORS["text_primary"],
-            insertbackground=COLORS["yellow"],
-            relief="flat",
-            bd=8,
-            highlightthickness=1,
-            highlightbackground=COLORS["border"],
-        )
-        dir_entry.pack(side="left", fill="x", expand=True, pady=(6, 0))
+            height=38,
+            fg_color=COLORS["bg"],
+            border_color=COLORS["blue"],
+            text_color=COLORS["white"],
+        ).pack(side="left", fill="x", expand=True)
 
         def browse():
             path = filedialog.askdirectory()
             if path:
                 dir_var.set(path)
 
-        browse_btn = self._make_button(dir_frame, "BROWSE", browse)
-        browse_btn.pack(side="right", padx=(8, 0), pady=(6, 0))
+        GlowButton(dir_row, text="BROWSE", width=100, height=38, variant="blue", command=browse).pack(side="left", padx=(8, 0))
 
-        br_frame = tk.Frame(settings_win, bg=COLORS["bg_dark"])
-        br_frame.pack(fill="x", padx=28, pady=18)
-
-        tk.Label(
-            br_frame,
+        ctk.CTkLabel(
+            body,
             text="Audio Quality (kbps):",
-            font=FONT_BODY_BOLD,
-            bg=COLORS["bg_dark"],
-            fg=COLORS["text_secondary"],
-        ).pack(anchor="w")
+            text_color=COLORS["yellow"],
+            font=ctk.CTkFont(size=14, weight="bold"),
+        ).pack(anchor="w", padx=18, pady=(18, 4))
 
         br_var = tk.StringVar(value=self.db.get_setting("bitrate") or "320")
-        br_menu = ttk.Combobox(
-            br_frame,
-            textvariable=br_var,
+        ctk.CTkOptionMenu(
+            body,
             values=["128", "192", "256", "320"],
-            state="readonly",
-            width=12,
-        )
-        br_menu.pack(anchor="w", pady=6)
+            variable=br_var,
+            fg_color=COLORS["panel_2"],
+            button_color=COLORS["yellow"],
+            button_hover_color=COLORS["yellow_2"],
+            text_color=COLORS["white"],
+            dropdown_fg_color=COLORS["panel"],
+            dropdown_hover_color=COLORS["blue_2"],
+        ).pack(anchor="w", padx=18, pady=(0, 14))
 
-        tk.Label(
-            settings_win,
-            text=(
-                "Legal Notice: TuneVault is for personal use only.\n"
-                "Downloading copyrighted content without permission may\n"
-                "violate your local laws. Use responsibly."
-            ),
-            font=("Segoe UI", 9),
-            bg=COLORS["bg_dark"],
-            fg=COLORS["yellow"],
-            justify="center",
-        ).pack(pady=16)
+        ctk.CTkLabel(
+            body,
+            text="Legal Notice: TuneVault is for personal use only. Use responsibly.",
+            text_color=COLORS["muted"],
+            font=ctk.CTkFont(size=12),
+        ).pack(anchor="w", padx=18, pady=(8, 16))
 
-        def save_settings():
+        def save():
             self.db.set_setting("music_dir", dir_var.get().strip())
             self.db.set_setting("bitrate", br_var.get())
-            settings_win.destroy()
+            win.destroy()
             self._set_status("Settings saved.")
 
-        save_btn = self._make_button(settings_win, "SAVE SETTINGS", save_settings, primary=True, width=18)
-        save_btn.pack(pady=8)
+        GlowButton(body, text="SAVE OPTIONS", width=170, height=42, variant="yellow", command=save).pack(pady=(0, 18))
 
     def _on_close(self):
-        self.db.close()
-        self.root.destroy()
-
-
-def main():
-    root = tk.Tk()
-
-    try:
-        if sys.platform == "win32":
-            root.iconbitmap(default="")
-    except Exception:
-        pass
-
-    TuneVaultApp(root)
-    root.mainloop()
+        try:
+            self.db.close()
+        finally:
+            self.destroy()
 
 
 if __name__ == "__main__":
-    main()
+    app = TuneVaultApp()
+    app.mainloop()
