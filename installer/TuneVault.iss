@@ -8,7 +8,7 @@ AppId={{8E1C455E-7782-47F3-9DB2-3DC66A5E94FE}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={autopf}\{#MyAppName}
+DefaultDirName={localappdata}\TuneVault
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=..
@@ -32,6 +32,7 @@ Source: "..\dist\TuneVault.exe"; DestDir: "{app}"; Flags: ignoreversion
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 Name: "{commondesktop}\TuneVault"; Filename: "{app}\TuneVault.exe"; IconFilename: "{app}\tunevault.ico"
+Name: "{userdesktop}\TuneVault"; Filename: "{app}\TuneVault.exe"
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
