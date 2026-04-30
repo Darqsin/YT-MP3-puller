@@ -13,6 +13,7 @@ Requires:
 import os
 import sys
 import threading
+import ctypes
 import tkinter as tk
 import webbrowser
 from tkinter import filedialog, messagebox
@@ -58,6 +59,16 @@ def resource_path(relative_path: str) -> str:
     """Support normal Python runs and PyInstaller one-file builds."""
     base_path = getattr(sys, "_MEIPASS", os.path.abspath("."))
     return os.path.join(base_path, relative_path)
+
+
+def set_windows_app_id():
+    """Make Windows treat TuneVault as a normal taskbar app with its own icon."""
+    if sys.platform != "win32":
+        return
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("TuneVault.Desktop.App")
+    except Exception:
+        pass
 
 
 class GlowButton(ctk.CTkButton):
@@ -123,11 +134,14 @@ class TuneVaultApp(ctk.CTk):
         self.minsize(1060, 680)
         self.configure(fg_color=COLORS["bg_dark"])
 
-        # Use custom titlebar to get much closer to the mockup.
-        # The app still has minimize/maximize/close buttons inside the custom frame.
-        self.overrideredirect(True)
-        self._drag_start_x = 0
-        self._drag_start_y = 0
+        # Keep the native Windows frame active.
+        # This fixes taskbar visibility, Alt+Tab, native edge resize, and normal minimize behavior.
+        self.overrideredirect(False)
+        self.resizable(True, True)
+        set_windows_app_id()
+
+        self._drag_offset_x = 0
+        self._drag_offset_y = 0
         self._is_maximized = False
         self._normal_geometry = None
 
@@ -154,31 +168,36 @@ class TuneVaultApp(ctk.CTk):
     # Window chrome
     # ------------------------------------------------------------------
     def _start_move(self, event):
-        self._drag_start_x = event.x
-        self._drag_start_y = event.y
+        # Allows dragging from the custom TuneVault title strip while keeping native resize/taskbar.
+        self._drag_offset_x = event.x_root - self.winfo_x()
+        self._drag_offset_y = event.y_root - self.winfo_y()
 
     def _do_move(self, event):
         if self._is_maximized:
             return
-        x = self.winfo_x() + event.x - self._drag_start_x
-        y = self.winfo_y() + event.y - self._drag_start_y
+        x = event.x_root - self._drag_offset_x
+        y = event.y_root - self._drag_offset_y
         self.geometry(f"+{x}+{y}")
 
     def _minimize(self):
-        self.overrideredirect(False)
         self.iconify()
-        self.after(250, lambda: self.overrideredirect(True))
 
     def _toggle_maximize(self):
         if self._is_maximized:
-            if self._normal_geometry:
-                self.geometry(self._normal_geometry)
+            try:
+                self.state("normal")
+            except Exception:
+                if self._normal_geometry:
+                    self.geometry(self._normal_geometry)
             self._is_maximized = False
         else:
             self._normal_geometry = self.geometry()
-            sw = self.winfo_screenwidth()
-            sh = self.winfo_screenheight()
-            self.geometry(f"{sw}x{sh}+0+0")
+            try:
+                self.state("zoomed")
+            except Exception:
+                sw = self.winfo_screenwidth()
+                sh = self.winfo_screenheight()
+                self.geometry(f"{sw}x{sh}+0+0")
             self._is_maximized = True
 
     # ------------------------------------------------------------------
@@ -206,6 +225,7 @@ class TuneVaultApp(ctk.CTk):
         titlebar.pack_propagate(False)
         titlebar.bind("<ButtonPress-1>", self._start_move)
         titlebar.bind("<B1-Motion>", self._do_move)
+        titlebar.bind("<Double-Button-1>", lambda _event: self._toggle_maximize())
 
         ctk.CTkLabel(
             titlebar,
@@ -225,6 +245,7 @@ class TuneVaultApp(ctk.CTk):
         title.place(relx=0.5, rely=0.5, anchor="center")
         title.bind("<ButtonPress-1>", self._start_move)
         title.bind("<B1-Motion>", self._do_move)
+        title.bind("<Double-Button-1>", lambda _event: self._toggle_maximize())
 
         # Window controls: normal Windows order: minimize, maximize, close.
         controls = ctk.CTkFrame(titlebar, fg_color="transparent")
