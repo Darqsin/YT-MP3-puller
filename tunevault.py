@@ -226,9 +226,13 @@ class TuneVaultApp(ctk.CTk):
         title.bind("<ButtonPress-1>", self._start_move)
         title.bind("<B1-Motion>", self._do_move)
 
+        # Window controls: normal Windows order: minimize, maximize, close.
+        controls = ctk.CTkFrame(titlebar, fg_color="transparent")
+        controls.pack(side="right", padx=(0, 8))
+
         for text, cmd in [("—", self._minimize), ("□", self._toggle_maximize), ("✕", self._on_close)]:
             ctk.CTkButton(
-                titlebar,
+                controls,
                 text=text,
                 width=38,
                 height=32,
@@ -238,7 +242,7 @@ class TuneVaultApp(ctk.CTk):
                 text_color=COLORS["white"],
                 command=cmd,
                 font=ctk.CTkFont(size=17, weight="bold"),
-            ).pack(side="right", padx=(0, 4))
+            ).pack(side="left", padx=(0, 4))
 
     def _build_header(self):
         header = ctk.CTkFrame(
