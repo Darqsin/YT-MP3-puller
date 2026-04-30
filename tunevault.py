@@ -130,20 +130,25 @@ class TuneVaultApp(ctk.CTk):
         super().__init__()
 
         self.title("TuneVault")
-        self.geometry("1220x760")
+        self.geometry("1220x820")
         self.minsize(1060, 680)
         self.configure(fg_color=COLORS["bg_dark"])
 
-        # Keep the native Windows frame active.
-        # This fixes taskbar visibility, Alt+Tab, native edge resize, and normal minimize behavior.
-        self.overrideredirect(False)
-        self.resizable(True, True)
+        # Borderless mockup window with rebuilt Windows behavior.
+        # Keeps the screenshot-style custom chrome while restoring taskbar, move, and resize.
         set_windows_app_id()
+        self.overrideredirect(True)
+        self.resizable(True, True)
 
         self._drag_offset_x = 0
         self._drag_offset_y = 0
         self._is_maximized = False
         self._normal_geometry = None
+        self._resize_edge = None
+        self._resize_start = None
+        self._resize_border = 8
+        self._min_w = 1060
+        self._min_h = 680
 
         icon_path = resource_path("tunevault.ico")
         if os.path.exists(icon_path):
@@ -167,8 +172,27 @@ class TuneVaultApp(ctk.CTk):
     # ------------------------------------------------------------------
     # Window chrome
     # ------------------------------------------------------------------
+    def _apply_taskbar_style(self):
+        """Force borderless Tk window to appear in taskbar / Alt+Tab on Windows."""
+        if sys.platform != "win32":
+            return
+        try:
+            self.update_idletasks()
+            hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
+            GWL_EXSTYLE = -20
+            WS_EX_TOOLWINDOW = 0x00000080
+            WS_EX_APPWINDOW = 0x00040000
+            style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            style = (style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
+            ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+            self.withdraw()
+            self.after(10, self.deiconify)
+        except Exception:
+            pass
+
     def _start_move(self, event):
-        # Allows dragging from the custom TuneVault title strip while keeping native resize/taskbar.
+        if self._is_maximized:
+            return
         self._drag_offset_x = event.x_root - self.winfo_x()
         self._drag_offset_y = event.y_root - self.winfo_y()
 
@@ -180,25 +204,101 @@ class TuneVaultApp(ctk.CTk):
         self.geometry(f"+{x}+{y}")
 
     def _minimize(self):
+        self.overrideredirect(False)
         self.iconify()
+        self.after(200, self._restore_borderless_after_minimize)
+
+    def _restore_borderless_after_minimize(self):
+        try:
+            if self.state() == "normal":
+                self.overrideredirect(True)
+                self._apply_taskbar_style()
+        except Exception:
+            pass
 
     def _toggle_maximize(self):
         if self._is_maximized:
-            try:
-                self.state("normal")
-            except Exception:
-                if self._normal_geometry:
-                    self.geometry(self._normal_geometry)
+            if self._normal_geometry:
+                self.geometry(self._normal_geometry)
             self._is_maximized = False
-        else:
-            self._normal_geometry = self.geometry()
-            try:
-                self.state("zoomed")
-            except Exception:
-                sw = self.winfo_screenwidth()
-                sh = self.winfo_screenheight()
-                self.geometry(f"{sw}x{sh}+0+0")
-            self._is_maximized = True
+            return
+
+        self._normal_geometry = self.geometry()
+        try:
+            if sys.platform == "win32":
+                class RECT(ctypes.Structure):
+                    _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long), ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+                rect = RECT()
+                ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0)
+                w = rect.right - rect.left
+                h = rect.bottom - rect.top
+                self.geometry(f"{w}x{h}+{rect.left}+{rect.top}")
+            else:
+                self.geometry(f"{self.winfo_screenwidth()}x{self.winfo_screenheight()}+0+0")
+        except Exception:
+            self.geometry(f"{self.winfo_screenwidth()}x{self.winfo_screenheight()}+0+0")
+        self._is_maximized = True
+
+    def _hit_test_resize_edge(self, event):
+        w, h = self.winfo_width(), self.winfo_height()
+        x, y = event.x, event.y
+        b = self._resize_border
+        left = x <= b
+        right = x >= w - b
+        top = y <= b
+        bottom = y >= h - b
+        if top and left: return "nw"
+        if top and right: return "ne"
+        if bottom and left: return "sw"
+        if bottom and right: return "se"
+        if left: return "w"
+        if right: return "e"
+        if top: return "n"
+        if bottom: return "s"
+        return None
+
+    def _on_mouse_motion(self, event):
+        if self._is_maximized or self._resize_start:
+            return
+        edge = self._hit_test_resize_edge(event)
+        cursors = {"n":"sb_v_double_arrow", "s":"sb_v_double_arrow", "e":"sb_h_double_arrow", "w":"sb_h_double_arrow",
+                   "ne":"size_ne_sw", "sw":"size_ne_sw", "nw":"size_nw_se", "se":"size_nw_se"}
+        self.configure(cursor=cursors.get(edge, ""))
+        self._resize_edge = edge
+
+    def _on_resize_press(self, event):
+        edge = self._hit_test_resize_edge(event)
+        if not edge or self._is_maximized:
+            return
+        self._resize_edge = edge
+        self._resize_start = (event.x_root, event.y_root, self.winfo_x(), self.winfo_y(), self.winfo_width(), self.winfo_height())
+
+    def _on_resize_drag(self, event):
+        if not self._resize_start or not self._resize_edge:
+            return
+        sx, sy, x0, y0, w0, h0 = self._resize_start
+        dx = event.x_root - sx
+        dy = event.y_root - sy
+        x, y, w, h = x0, y0, w0, h0
+        edge = self._resize_edge
+        if "e" in edge:
+            w = max(self._min_w, w0 + dx)
+        if "s" in edge:
+            h = max(self._min_h, h0 + dy)
+        if "w" in edge:
+            w = max(self._min_w, w0 - dx)
+            if w > self._min_w:
+                x = x0 + dx
+        if "n" in edge:
+            h = max(self._min_h, h0 - dy)
+            if h > self._min_h:
+                y = y0 + dy
+        self.geometry(f"{int(w)}x{int(h)}+{int(x)}+{int(y)}")
+
+    def _on_resize_release(self, _event):
+        self._resize_start = None
+        self._resize_edge = None
+        self.configure(cursor="")
 
     # ------------------------------------------------------------------
     # UI Layout
@@ -212,6 +312,13 @@ class TuneVaultApp(ctk.CTk):
             corner_radius=14,
         )
         self.outer.pack(fill="both", expand=True, padx=4, pady=4)
+
+        # Manual borderless resize bindings.
+        self.bind("<Motion>", self._on_mouse_motion)
+        self.bind("<ButtonPress-1>", self._on_resize_press)
+        self.bind("<B1-Motion>", self._on_resize_drag)
+        self.bind("<ButtonRelease-1>", self._on_resize_release)
+        self.after(50, self._apply_taskbar_style)
 
         self._build_titlebar()
         self._build_header()
